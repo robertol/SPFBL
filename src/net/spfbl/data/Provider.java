@@ -73,7 +73,7 @@ public class Provider {
             return SET.remove(token);
         }
         
-        public static boolean contains(String token) {
+        public static synchronized boolean contains(String token) {
             return SET.contains(token);
         }
     }
@@ -192,18 +192,22 @@ public class Provider {
             }
         }
         
+        private static synchronized TreeSet<String> getClientSet(String client) {
+            return MAP.get(client);
+        }
+        
         public static boolean contains(String client, String cidr) {
             if (cidr == null) {
                 return false;
             } else {
                 String key = Subnet.expandCIDR(cidr);
-                TreeSet<String> cidrSet = MAP.get(client);
+                TreeSet<String> cidrSet = getClientSet(client);
                 return cidrSet.contains(key);
             }
         }
         
         private static String getFloor(String client, String ip) {
-            TreeSet<String> cidrSet = MAP.get(client);
+            TreeSet<String> cidrSet = getClientSet(client);
             if (cidrSet == null || cidrSet.isEmpty()) {
                 return null;
             } else if (SubnetIPv4.isValidIPv4(ip)) {
@@ -232,7 +236,6 @@ public class Provider {
         }
 
         public static String get(String client, String ip) {
-            long time = System.currentTimeMillis();
             String result;
             String cidr = getFloor(null, ip);
             if (Subnet.containsIP(cidr, ip)) {
@@ -246,13 +249,8 @@ public class Provider {
             } else {
                 result = null;
             }
-            logTrace(time, "CIDR lookup for '" + ip + "'.");
             return result;
         }
-    }
-    
-    private static void logTrace(long time, String message) {
-        Server.log(time, Core.Level.TRACE, "IGNOR", message, (String) null);
     }
     
     private static boolean dropExact(String token) {
@@ -306,7 +304,9 @@ public class Provider {
     }
     
     private static String normalizeProvider(String token) throws ProcessException {
-        return SPF.normalizeToken(token, false, false, true, false, false);
+        return SPF.normalizeToken(token, false, false, true, false,
+//                false,
+                false);
     }
 
     public static boolean add(String address) throws ProcessException {
@@ -343,19 +343,36 @@ public class Provider {
         return CIDR.get(null, ip) != null;
     }
     
-    public static boolean containsDomain(String helo) {
-        helo = Domain.normalizeHostname(helo, true);
-        if (helo == null) {
+    public static boolean containsMX(String sender) {
+        if (sender == null) {
+            return false;
+        } else if (Domain.isEmail(sender)) {
+            int index = sender.indexOf('@');
+            return SET.contains(sender.substring(index));
+        } else {
+            return false;
+        }
+    }
+    
+    public static boolean containsDomain(String address) {
+        if (address == null) {
             return false;
         } else {
-            do {
-                int index = helo.indexOf('.') + 1;
-                helo = helo.substring(index);
-                if (SET.contains('.' + helo)) {
-                    return true;
-                }
-            } while (helo.contains("."));
-            return false;
+            int index = address.indexOf('@') + 1;
+            address = address.substring(index);
+            String hostname = Domain.normalizeHostname(address, true);
+            if (hostname == null) {
+                return false;
+            } else {
+                do {
+                    index = hostname.indexOf('.') + 1;
+                    hostname = hostname.substring(index);
+                    if (SET.contains('.' + hostname)) {
+                        return true;
+                    }
+                } while (hostname.contains("."));
+                return false;
+            }
         }
     }
 
@@ -376,6 +393,7 @@ public class Provider {
     public static void store() {
         if (CHANGED) {
             try {
+                Server.logTrace("storing provider.set");
                 long time = System.currentTimeMillis();
                 File file = new File("./data/provider.set");
                 TreeSet<String> set = getAll();

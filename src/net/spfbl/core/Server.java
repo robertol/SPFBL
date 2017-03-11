@@ -23,8 +23,6 @@ import net.spfbl.data.White;
 import net.spfbl.data.Trap;
 import net.spfbl.data.Ignore;
 import net.spfbl.spf.SPF;
-import net.spfbl.spf.SPF.Distribution;
-import net.spfbl.spf.SPF.Status;
 import net.spfbl.whois.AutonomousSystem;
 import net.spfbl.whois.Domain;
 import net.spfbl.whois.Handle;
@@ -44,36 +42,30 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.text.DecimalFormat;
-import java.text.NumberFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.LinkedList;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.naming.NamingException;
 import javax.naming.directory.Attributes;
 import javax.naming.directory.InitialDirContext;
-import net.spfbl.core.Client.Permission;
-import net.spfbl.dnsbl.QueryDNSBL;
-import net.spfbl.dnsbl.ServerDNSBL;
-import net.spfbl.spf.SPF.Binomial;
+import net.spfbl.data.Generic;
+import net.spfbl.dns.QueryDNS;
 import org.apache.commons.lang3.SerializationUtils;
 import org.apache.commons.net.whois.WhoisClient;
 
@@ -124,6 +116,7 @@ public abstract class Server extends Thread {
         Peer.load();
         Analise.load();
         Reverse.load();
+        Generic.load();
         Block.load();
         White.load();
         Trap.load();
@@ -132,13 +125,44 @@ public abstract class Server extends Thread {
         SPF.load();
         NoReply.load();
         Defer.load();
-        QueryDNSBL.load();
+        QueryDNS.load();
     }
+    
+    private static Semaphore SEMAPHORE_STORE = new Semaphore(1);
     
     /**
      * Armazenamento de cache em disco.
      */
-    public static void storeCache() {
+    public static boolean tryStoreCache(boolean simplify) {
+        if (SEMAPHORE_STORE.tryAcquire()) {
+            try {
+                storeAll(simplify, true);
+                return true;
+            } finally {
+                SEMAPHORE_STORE.release();
+            }
+        } else {
+            return false;
+        }
+    }
+        
+    /**
+     * Armazenamento de cache em disco.
+     */
+    private static void storeCache() {
+        try {
+            SEMAPHORE_STORE.acquire();
+            try {
+                storeAll(false, false);
+            } finally {
+                SEMAPHORE_STORE.release();
+            }
+        } catch (Exception ex) {
+            Server.logError(ex);
+        }
+    }
+    
+    private static void storeAll(boolean simplify, boolean clone) {
         Client.store();
         User.store();
         Owner.store();
@@ -151,18 +175,19 @@ public abstract class Server extends Thread {
         Peer.store();
         Analise.store();
         Reverse.store();
-        Block.store();
+        Generic.store();
+        Block.store(simplify);
         White.store();
         Trap.store();
         Ignore.store();
         Provider.store();
-        SPF.store();
+        SPF.store(clone);
         NoReply.store();
         Defer.store();
-        QueryDNSBL.store();
+        QueryDNS.store();
         System.gc();
     }
-    
+
     private static SecretKey privateKey = null;
     
     private static SecretKey getPrivateKey() {
@@ -230,6 +255,21 @@ public abstract class Server extends Thread {
         }
     }
     
+    public static String encryptURLSafe(byte[] byteArray) throws ProcessException {
+        if (byteArray == null) {
+            return null;
+        } else {
+            try {
+                Cipher cipher = Cipher.getInstance("AES");
+                cipher.init(Cipher.ENCRYPT_MODE, getPrivateKey());
+                byte[] code = cipher.doFinal(byteArray);
+                return Core.BASE64.encodeAsString(code);
+            } catch (Exception ex) {
+                throw new ProcessException("ERROR: ENCRYPTION", ex);
+            }
+        }
+    }
+    
     public static String decrypt(String code) throws ProcessException {
         if (code == null) {
             return null;
@@ -239,6 +279,20 @@ public abstract class Server extends Thread {
                 cipher.init(Cipher.DECRYPT_MODE, getPrivateKey());
                 byte[] message = cipher.doFinal(Base64Coder.decode(code));
                 return new String(message, "UTF8");
+            } catch (Exception ex) {
+                throw new ProcessException("ERROR: DECRYPTION", ex);
+            }
+        }
+    }
+    
+    public static byte[] decryptToByteArrayURLSafe(String code) throws ProcessException {
+        if (code == null) {
+            return null;
+        } else {
+            try {
+                Cipher cipher = Cipher.getInstance("AES");
+                cipher.init(Cipher.DECRYPT_MODE, getPrivateKey());
+                return cipher.doFinal(Core.BASE64.decode(code));
             } catch (Exception ex) {
                 throw new ProcessException("ERROR: DECRYPTION", ex);
             }
@@ -269,7 +323,7 @@ public abstract class Server extends Thread {
      * portanto é necessário utilizar sincronismo
      * nos métodos que o utilizam.
      */
-    private static final SimpleDateFormat FORMAT_DATE_LOG = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSZ");
+    private static final SimpleDateFormat FORMAT_DATE_LOG = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
     
     /**
      * Constante de formatação da data no ticket.
@@ -499,6 +553,10 @@ public abstract class Server extends Thread {
         log(System.currentTimeMillis(), Core.Level.DEBUG, "DEBUG", message, (String) null);
     }
     
+    public static void logSendMTP(String message) {
+        log(System.currentTimeMillis(), Core.Level.DEBUG, "SMTPS", message, (String) null);
+    }
+    
     /**
      * Registra as mensagens para depuração de código.
      * @param message a mensagem a ser registrada.
@@ -625,12 +683,7 @@ public abstract class Server extends Thread {
      * @param ex a exceção a ser registrada.
      */
     public static void logError(Throwable ex) {
-//        if (ex instanceof ProcessException) {
-//            ProcessException pex = (ProcessException) ex;
-//            log(System.currentTimeMillis(), Core.Level.ERROR, "ERROR", pex.getErrorMessage(), (String) null);
-//        } else if (ex instanceof Exception) {
-            log(System.currentTimeMillis(), Core.Level.ERROR, "ERROR", ex);
-//        }
+        log(System.currentTimeMillis(), Core.Level.ERROR, "ERROR", ex);
     }
     
     /**
@@ -643,6 +696,11 @@ public abstract class Server extends Thread {
     public static void logLookupSPF(
             long time, String hostname, String result) {
         log(time, Core.Level.DEBUG, "SPFLK", hostname, result);
+    }
+    
+    public static void logQueryP2PUDP(long time,
+            InetAddress ipAddress, String query, String result) {
+        logQuery(time, "P2PUDP", ipAddress, query, result);
     }
     
     /**
@@ -750,7 +808,9 @@ public abstract class Server extends Thread {
             Core.Level level,
             String type,
             String client,
-            String query, String result) {
+            String query,
+            String result
+    ) {
         log(time, level, type, (client == null ? "" : client + ": ") + query, result);
     }
     
@@ -758,7 +818,16 @@ public abstract class Server extends Thread {
             long time,
             String type,
             String client,
-            String query, String result) {
+            String query,
+            String result
+    ) {
+        if (result != null && result.length() > 1024) {
+            int index1 = result.indexOf('\n', 1024);
+            int index2 = result.indexOf(' ', 1024);
+            int index = Math.min(index1, index2);
+            index = Math.max(index, 1024);
+            result = result.substring(0, index) + "... too long";
+        }
         log(time, Core.Level.INFO, type, (client == null ? "" : client + ": ") + query, result);
     }
     
@@ -784,10 +853,12 @@ public abstract class Server extends Thread {
         Server.logInfo("interrupting analises...");
         Analise.interrupt();
         Server.logInfo("shutting down server...");
+        for (Server server : SERVER_LIST) {
+            server.run = false;
+        }
         boolean closed = true;
         for (Server server : SERVER_LIST) {
             try {
-                server.run = false;
                 server.close();
             } catch (Exception ex) {
                 closed = false;
@@ -928,12 +999,12 @@ public abstract class Server extends Thread {
         long time = System.currentTimeMillis();
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         try {
-//            WHOIS_CONNECTION_SEMAPHORE.acquire();
-            if (WHOIS_CONNECTION_SEMAPHORE.tryAcquire(3, TimeUnit.SECONDS)) {
+            if (WHOIS_CONNECTION_SEMAPHORE.tryAcquire()) {
                 try {
                     acquireWhoisIDQuery();
                     WhoisClient whoisClient = new WhoisClient();
                     try {
+                        whoisClient.setDefaultTimeout(3000);
                         whoisClient.connect(server);
                         InputStream inputStream = whoisClient.getInputStream(query);
                         int code;
@@ -977,6 +1048,16 @@ public abstract class Server extends Thread {
         return INITIAL_DIR_CONTEXT.getAttributes("dns:/" + hostname, types);
     }
     
+//    public static String getProviderDNS() {
+//        try {
+//            Hashtable env = (Hashtable) INITIAL_DIR_CONTEXT.getEnvironment();
+//            return (String) env.get("java.naming.provider.url") + '/';
+//        } catch (NamingException ex) {
+//            Server.logError(ex);
+//            return "";
+//        }
+//    }
+    
     static {
         try {
             initDNS();
@@ -986,12 +1067,28 @@ public abstract class Server extends Thread {
         }
     }
     
+    private static String DNS_PROVIDER = null;
+    
+    public static void setProviderDNS(String ip) {
+        if (ip != null && ip.length() > 0) {
+            if (Subnet.isValidIP(ip)) {
+                Server.DNS_PROVIDER = Subnet.normalizeIP(ip);
+                Server.logInfo("using " + ip + " as fixed DNS provider.");
+            } else {
+                Server.logError("invalid DNS provider '" + ip + "'.");
+            }
+        }
+    }
+    
     @SuppressWarnings("unchecked")
     public static void initDNS() throws NamingException {
         Hashtable env = new Hashtable();
         env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
         env.put("com.sun.jndi.dns.timeout.initial", "3000");
         env.put("com.sun.jndi.dns.timeout.retries", "1");
+        if (DNS_PROVIDER != null) {
+            env.put("java.naming.provider.url", "dns://" + DNS_PROVIDER);
+        }
         INITIAL_DIR_CONTEXT = new InitialDirContext(env);
     }
     
@@ -1007,12 +1104,12 @@ public abstract class Server extends Thread {
         long time = System.currentTimeMillis();
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         try {
-//            WHOIS_CONNECTION_SEMAPHORE.acquire();
-            if (WHOIS_CONNECTION_SEMAPHORE.tryAcquire(3, TimeUnit.SECONDS)) {
+            if (WHOIS_CONNECTION_SEMAPHORE.tryAcquire()) {
                 try {
                     acquireWhoisQuery();
                     WhoisClient whoisClient = new WhoisClient();
                     try {
+                        whoisClient.setDefaultTimeout(3000);
                         whoisClient.connect(server);
                         InputStream inputStream = whoisClient.getInputStream(query);
                         try {
@@ -1047,18 +1144,18 @@ public abstract class Server extends Thread {
         }
     }
     
-    public static synchronized void tryRefreshWHOIS() {
-        // Evita que muitos processos fiquem 
-        // presos aguardando a liberação do método.
-        if (WHOIS_QUERY_SEMAPHORE.availablePermits() == WHOIS_QUERY_LIMIT) {
-            refreshWHOIS();
-        }
-    }
+//    public static synchronized void tryRefreshWHOIS() {
+//        // Evita que muitos processos fiquem 
+//        // presos aguardando a liberação do método.
+//        if (WHOIS_QUERY_SEMAPHORE.availablePermits() == WHOIS_QUERY_LIMIT) {
+//            refreshWHOIS();
+//        }
+//    }
     
     /**
      * Atualiza os registros quase expirando.
      */
-    public static synchronized boolean refreshWHOIS() {
+    public static synchronized boolean tryRefreshWHOIS() {
         if (WHOIS_QUERY_SEMAPHORE.availablePermits() == WHOIS_QUERY_LIMIT) {
             if (Domain.backgroundRefresh()) {
                 return true;
@@ -1079,7 +1176,7 @@ public abstract class Server extends Thread {
         try {
             String result = "";
             if (query.length() == 0) {
-                result = "ERROR: QUERY\n";
+                result = "INVALID QUERY\n";
             } else {
                 StringTokenizer tokenizer = new StringTokenizer(query, " ");
                 String token = tokenizer.nextToken();
@@ -1112,17 +1209,21 @@ public abstract class Server extends Thread {
                     }
                 } else if (Domain.containsDomain(token) && tokenizer.hasMoreTokens()) {
                     Domain domain = Domain.getDomain(token);
-                    while (tokenizer.hasMoreTokens()) {
-                        String key = tokenizer.nextToken();
-                        String value = domain.get(key, updated);
-                        if (value == null) {
-                            result += '\n';
-                        } else {
-                            result += value + '\n';
+                    if (domain == null) {
+                        result = "NOT FOUND\n";
+                    } else {
+                        while (tokenizer.hasMoreTokens()) {
+                            String key = tokenizer.nextToken();
+                            String value = domain.get(key, updated);
+                            if (value == null) {
+                                result += '\n';
+                            } else {
+                                result += value + '\n';
+                            }
                         }
                     }
                 } else {
-                    result = "ERROR: QUERY\n";
+                    result = "INVALID QUERY\n";
                 }
             }
             return result;

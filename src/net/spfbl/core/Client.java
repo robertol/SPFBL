@@ -26,6 +26,7 @@ import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import net.spfbl.data.Generic;
 import net.spfbl.whois.Domain;
 import net.spfbl.whois.Subnet;
 import org.apache.commons.lang3.SerializationUtils;
@@ -43,18 +44,26 @@ public class Client implements Serializable, Comparable<Client> {
     private String domain;
     private String email;
     private Permission permission = Permission.NONE;
+    private Personality personality = Personality.RATIONAL;
     private int limit = 100;
     private NormalDistribution frequency = null;
     private long last = 0;
     
     private Action actionBLOCK = Action.REJECT;
     private Action actionRED = Action.FLAG;
+    private Action actionYELLOW = Action.DEFER;
     
     public enum Permission {
         NONE,
         DNSBL,
         SPFBL,
         ALL
+    }
+    
+    public enum Personality {
+        PASSIVE,
+        RATIONAL,
+        AGRESSIVE
     }
     
     private Client(String cidr, String domain, String email) throws ProcessException {
@@ -66,10 +75,10 @@ public class Client implements Serializable, Comparable<Client> {
             } else if (Domain.isEmail(email)) {
                 this.email = email.toLowerCase();
             } else {
-                throw new ProcessException("ERROR: INVALID EMAIL");
+                throw new ProcessException("INVALID EMAIL");
             }
         } else {
-            throw new ProcessException("ERROR: INVALID CLIENT");
+            throw new ProcessException("INVALID CLIENT");
         }
     }
     
@@ -81,7 +90,7 @@ public class Client implements Serializable, Comparable<Client> {
             this.domain = Domain.extractHost(domain, false);
             CHANGED = true;
         } else {
-            throw new ProcessException("ERROR: INVALID DOMAIN");
+            throw new ProcessException("INVALID DOMAIN");
         }
     }
     
@@ -93,7 +102,7 @@ public class Client implements Serializable, Comparable<Client> {
             this.email = email.toLowerCase();
             CHANGED = true;
         } else {
-            throw new ProcessException("ERROR: INVALID EMAIL");
+            throw new ProcessException("INVALID EMAIL");
         }
     }
     
@@ -110,16 +119,35 @@ public class Client implements Serializable, Comparable<Client> {
         try {
             setPermission(Permission.valueOf(permission));
         } catch (Exception ex) {
-            throw new ProcessException("ERROR: INVALID PERMISSION");
+            throw new ProcessException("INVALID PERMISSION");
         }
     }
     
     public void setPermission(Permission permission) throws ProcessException {
         if (permission == null) {
-            throw new ProcessException("ERROR: INVALID PERMISSION");
+            throw new ProcessException("INVALID PERMISSION");
         } else if (this.permission != permission) {
             this.permission = permission;
             CHANGED = true;
+        }
+    }
+    
+    public boolean setPersonality(String personality) throws ProcessException {
+        try {
+            return setPersonality(Personality.valueOf(personality));
+        } catch (Exception ex) {
+            throw new ProcessException("INVALID PERSONALITY");
+        }
+    }
+    
+    public boolean setPersonality(Personality personality) throws ProcessException {
+        if (personality == null) {
+            throw new ProcessException("INVALID PERSONALITY");
+        } else if (this.personality == personality) {
+            return false;
+        } else {
+            this.personality = personality;
+            return CHANGED = true;
         }
     }
     
@@ -127,13 +155,13 @@ public class Client implements Serializable, Comparable<Client> {
         try {
             return setActionBLOCK(Action.valueOf(action));
         } catch (Exception ex) {
-            throw new ProcessException("ERROR: INVALID BLOCK ACTION");
+            throw new ProcessException("INVALID BLOCK ACTION");
         }
     }
     
     public boolean setActionBLOCK(Action action) throws ProcessException {
         if (action == null || action == Action.DEFER) {
-            throw new ProcessException("ERROR: INVALID BLOCK ACTION");
+            throw new ProcessException("INVALID BLOCK ACTION");
         } else if (this.actionBLOCK == action) {
             return false;
         } else {
@@ -146,13 +174,13 @@ public class Client implements Serializable, Comparable<Client> {
         try {
             return setActionRED(Action.valueOf(action));
         } catch (Exception ex) {
-            throw new ProcessException("ERROR: INVALID RED ACTION");
+            throw new ProcessException("INVALID RED ACTION");
         }
     }
     
     public boolean setActionRED(Action action) throws ProcessException {
         if (action == null) {
-            throw new ProcessException("ERROR: INVALID RED ACTION");
+            throw new ProcessException("INVALID RED ACTION");
         } else if (this.actionRED == action) {
             return false;
         } else {
@@ -161,17 +189,41 @@ public class Client implements Serializable, Comparable<Client> {
         }
     }
     
+    public boolean setActionYELLOW(String action) throws ProcessException {
+        try {
+            return setActionYELLOW(Action.valueOf(action));
+        } catch (Exception ex) {
+            throw new ProcessException("INVALID YELLOW ACTION");
+        }
+    }
+    
+    public boolean setActionYELLOW(Action action) throws ProcessException {
+        if (action == null) {
+            throw new ProcessException("INVALID YELLOW ACTION");
+        } else if (action == this.actionYELLOW) {
+            return false;
+        } else if (action == Action.DEFER) {
+            this.actionYELLOW = Action.DEFER;
+            return CHANGED = true;
+        } else if (action == Action.HOLD) {
+            this.actionYELLOW = Action.HOLD;
+            return CHANGED = true;
+        } else {
+            throw new ProcessException("INVALID YELLOW ACTION");
+        }
+    }
+
     public boolean setLimit(String limit) throws ProcessException {
         try {
             return setLimit(Integer.parseInt(limit));
         } catch (NumberFormatException ex) {
-            throw new ProcessException("ERROR: INVALID LIMIT", ex);
+            throw new ProcessException("INVALID LIMIT", ex);
         }
     }
     
     public boolean setLimit(int limit) throws ProcessException {
         if (limit <= 0 || limit > 3600000) {
-            throw new ProcessException("ERROR: INVALID LIMIT");
+            throw new ProcessException("INVALID LIMIT");
         } else if (this.limit == limit) {
             return false;
         } else {
@@ -235,12 +287,28 @@ public class Client implements Serializable, Comparable<Client> {
         }
     }
     
+    public boolean isPassive() {
+        return personality == Personality.PASSIVE;
+    }
+    
+    public boolean isAgressive() {
+        return personality == Personality.AGRESSIVE;
+    }
+    
+    public Personality getPersonality() {
+        return personality;
+    }
+    
     public Action getActionBLOCK() {
         return actionBLOCK;
     }
     
     public Action getActionRED() {
         return actionRED;
+    }
+    
+    public Action getActionYELLOW() {
+        return actionYELLOW;
     }
     
     /**
@@ -270,7 +338,7 @@ public class Client implements Serializable, Comparable<Client> {
                 return null;
             }
         } else {
-            throw new ProcessException("ERROR: INVALID CIDR");
+            throw new ProcessException("INVALID CIDR");
         }
     }
     
@@ -296,7 +364,7 @@ public class Client implements Serializable, Comparable<Client> {
     
     public static Client drop(String cidr) throws ProcessException {
         if (cidr == null || !Subnet.isValidCIDR(cidr)) {
-            throw new ProcessException("ERROR: INVALID CIDR");
+            throw new ProcessException("INVALID CIDR");
         } else {
             cidr = Subnet.normalizeCIDR(cidr);
             String ip = Subnet.getFirstIP(cidr);
@@ -373,7 +441,7 @@ public class Client implements Serializable, Comparable<Client> {
         if (email == null) {
             return null;
         } else if (!Domain.isEmail(email)) {
-            throw new ProcessException("ERROR: INVALID E-MAIL");
+            throw new ProcessException("INVALID E-MAIL");
         } else {
             return MAP.get(email);
         }
@@ -383,7 +451,7 @@ public class Client implements Serializable, Comparable<Client> {
         if (cidr == null) {
             return null;
         } else if (!Subnet.isValidCIDR(cidr)) {
-            throw new ProcessException("ERROR: INVALID CIDR");
+            throw new ProcessException("INVALID CIDR");
         } else {
             cidr = Subnet.normalizeCIDR(cidr);
             String ip = Subnet.getFirstIP(cidr);
@@ -422,7 +490,16 @@ public class Client implements Serializable, Comparable<Client> {
             if (cidr != null) {
                 String ip = address.getHostAddress();
                 String hostame = Reverse.getHostname(ip);
-                String domain = Domain.extractDomain(hostame, false);
+                String domain;
+                if (Generic.contains(hostame)) {
+                    domain = null;
+                } else {
+                    try {
+                        domain = Domain.extractDomain(hostame, false);
+                    } catch (ProcessException ex) {
+                        domain = null;
+                    }
+                }
                 client = Client.create(cidr, domain, permissao, null);
                 if (client != null) {
                     Server.logDebug("CLIENT ADDED " + client);
@@ -493,6 +570,7 @@ public class Client implements Serializable, Comparable<Client> {
     public static void store() {
         if (CHANGED) {
             try {
+                Server.logTrace("storing client.map");
                 long time = System.currentTimeMillis();
                 HashMap<String,Client> map = getMap();
                 File file = new File("./data/client.map");
@@ -535,6 +613,12 @@ public class Client implements Serializable, Comparable<Client> {
                         }
                         if (client.actionRED == null) {
                             client.actionRED = Action.FLAG;
+                        }
+                        if (client.actionYELLOW == null) {
+                            client.actionYELLOW = Action.DEFER;
+                        }
+                        if (client.personality == null) {
+                            client.personality = Personality.RATIONAL;
                         }
                         MAP.put(key, client);
                     }
@@ -615,14 +699,16 @@ public class Client implements Serializable, Comparable<Client> {
         return interval;
     }
     
-    public void addQuery() {
+    public boolean addQuery() {
         Float interval = getInterval();
         if (interval == null) {
-            // Se não houver intervalo definido, fazer nada.
+            return false;
         } else if (frequency == null) {
-            frequency = new NormalDistribution(interval);
+            frequency = new NormalDistribution(interval < 1000 ? 1000 : interval);
+            return true;
         } else {
             frequency.addElement(interval);
+            return true;
         }
     }
     

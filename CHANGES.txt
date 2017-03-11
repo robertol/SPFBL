@@ -1,0 +1,118 @@
+### v2.5.1 ; release 15/01/2017:
+
+FIX) correção no timeout do WHOIS, que causava encavalamento de conexões SPFBL.
+
+FIX) correção no parsing da resposta WHOIS nos campos de data.
+
+UPDT) botão para visualizar mais registros no painel de controle.
+
+NEW) implementação do ACTION para status YELLOW, com nova possibilidade de HOLD.
+
+NEW) implementação do NXSENDER, que indica remetente inexistente.
+
+### v2.5.0 ; release 25/12/2016:
+
+FIX) correção no parsing da resposta WHOIS.
+
+NEW) implementação de máscara nos registros da lista GENERIC.
+
+FIX) correções que causavam deadlock em certos métodos de manipulação de listas.
+
+FIX) correção na liberação de bloqueio do usuário pelo painel de controle.
+
+UPDT) preparação para pacote P2P suportar mais valores, que serão usados futuramente.
+
+NEW) implementação do calculo de correlação entre peers para determinar ponderação de reputação.
+
+UPDT) melhorias no gerenciamento de memória e no fluxo multithread.
+
+FIX) correção na grafia smpt_port no spfbl.conf.
+
+NEW) implementação da variável dns_provider no spfbl.conf para determinar um servidor DNS fixo que o SPFBL deve consultar.
+
+NEW) implementação do serviço DNSWL.
+
+NEW) implementação saída HOLD para congelamento da mensagem no MTA.
+
+NEW) implementação saída OUT OF SERVICE.
+
+NEW) implementação saída INEXISTENT para destinatário cadastrado como inexistente e todos registros incluidos nesta lista se tornam automaticamente spamtrap em 365 dias.
+
+NEW) script spfbl.sh stats - show daily statistics.
+
+NEW) script spfbl.sh backup.
+
+UPDT) script spfbl.sh - comando INEXISTENT.
+
+UPDT) script postfix.pl - saida INEXISTENT.
+
+UPDT) melhorias "white sender"; Ex. spfbl.sh white add sender@domain.tld.
+
+UPDT) atualização nos scripts .sh e .pl; adicionadas saídas HOLD e FLAG do engine SPFBL.
+
+UPDT) adições nas configurações do EXIM; verificação From e Reply-to.
+
+FIX) correção comando DUMP - pulava uma entrada em whitelist quando especifico para um dominio.
+
+
+### v.2.4.1 ; release 31/10/2016:
+
+FIX) correção na inicialização do SPFBL quando a lista de ANALISE estiver vazia (loop - high CPU);
+
+
+### v.2.4.0 ; release 30/10/2016:
+
+NEW) implementação do Painel de Controle - acesso web pelo navegador
+
+*) método de separação dos segmentos IPv6;
+
+*) validação de endereço de e-mail decarta hostname composto por IPv4;
+
+*) flexibilização do SPF para adotar regra de derminação do host MX da entrega de e-mail no mecanismo "mx" onde, na ausencia de hosts MX, considerar o A;
+
+*) método de limpeza de falsos positivos continha uma falha, que causava loop infinito em alguns casos, que foi corrigida;
+
+*) correção da validação CIDR;
+
+*) abolição da regra whitelist com qualificador FAIL com substituto pela zona da origem ou IP;
+
+*) implementação da validação whitelist pela zona do IP de origem ou pelo próprio IP;
+
+*) implementação do registro de consultas do usuário;
+
+*) auto bloqueio de IP com reputação vermelha e enviando FAIL;
+
+*) auto bloqueio de IP sem remetente válido e com FCrDNS inválido quando reputação não for verde;
+
+*) auto bloqueio de indentificadores válidos no envio para spamtrap e sem reputação verde;
+
+*) inplementação do formato seguro de URL, na qual possa ser enviado por qualquer meio sem corrompimento do mesmo;
+
+*) implementação do comando LINK, cujos parâmetros são o ticket sem URL seguido de todos os hrefs do HTML encontrados para vericicação de bloqueio;
+
+*) implementação do comando MALWARE, cujos parâmetros são o ticket sem URL seguido do nome do malware;
+
+*) implementação do comando FROM, cujos parâmetros são o ticket sem URL seguido dos cabeçalhos From, Reply-To e List-Unsubscribe;
+
+*) implementação do método hairCut, na qual remove o excesso de registros de denuncia a fim de evitar um estouro de memória;
+
+*) detecção de usuário postmaster quando o mesmo estiver cadastrado como tal;
+
+*) implementação de autenticação TOTP para usuários;
+
+*) implementação do painel de controle para usuários, para manipulação de listas de bloqueio e whitelist usando registros de consulta;
+
+*) confirmação de desbloqueio para remetente liberado pelo destinatário;
+
+*) implementação do código DNSBL 127.0.0.3 para IP bloqueado apesar de reputação não estar ruim;
+
+*) implementação da lista GENERIC para identificar hostnames genéricos de datacenter ou operadoras de acesso à Internet;
+
+*) aprimoramento na validação dos peers;
+
+*) implementação do algoritimo de Huffman para reduzir o tamanho das URLs geradas;
+
+*) implementação de personalidade para clientes, para determinar novos comportamentos personalizados do sistema para cada cliente;
+
+*) correção nos métodos do subsistema de análise;
+

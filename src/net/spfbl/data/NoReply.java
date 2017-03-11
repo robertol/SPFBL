@@ -94,7 +94,7 @@ public class NoReply {
 
     public static boolean add(String address) throws ProcessException {
         if ((address = normalize(address)) == null) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
+            throw new ProcessException("RECIPIENT INVALID");
         } else if (addExact(address)) {
             return true;
         } else {
@@ -114,7 +114,7 @@ public class NoReply {
 
     public static boolean drop(String address) throws ProcessException {
         if ((address = normalize(address)) == null) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
+            throw new ProcessException("RECIPIENT INVALID");
         } else if (dropExact(address)) {
             return true;
         } else {
@@ -132,18 +132,26 @@ public class NoReply {
         return trapSet;
     }
 
-    public static boolean contains(String address) {
-        if (!Domain.isEmail(address)) {
-            return false;
-        } else if (address.contains("bounce+")) {
+    public static boolean contains(String address, boolean inexistent) {
+        if (address.contains("bounce+")) {
             return true;
         } else if (address.contains("bounce-")) {
+            return true;
+        } else if (address.contains("bounces-")) {
+            return true;
+        } else if (address.contains("-bounces@")) {
+            return true;
+        } else if (address.startsWith("return-")) {
             return true;
         } else if (address.startsWith("prvs=")) {
             return true;
         } else if (address.startsWith("msprvs1=")) {
             return true;
+        } else if (!Domain.isValidEmail(address)) {
+            return false;
         } else if (containsExact(address)) {
+            return true;
+        } else if (inexistent && Trap.contaisAnything(address)) {
             return true;
         } else {
             address = address.toLowerCase();
@@ -186,6 +194,7 @@ public class NoReply {
     public static void store() {
         if (CHANGED) {
             try {
+                Server.logTrace("storing noreply.set");
                 long time = System.currentTimeMillis();
                 File file = new File("./data/noreply.set");
                 TreeSet<String> set = getAll();

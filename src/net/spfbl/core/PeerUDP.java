@@ -58,6 +58,7 @@ public final class PeerUDP extends Server {
         SIZE = size - 20 - 8; // Tamanho máximo da mensagem já descontando os cabeçalhos de IP e UDP.
         // Criando conexões.
         SERVER_SOCKET = new DatagramSocket(port);
+        Server.logTrace(getName() + " thread allocation.");
     }
     
     public boolean hasConnection() {
@@ -103,6 +104,7 @@ public final class PeerUDP extends Server {
             super("P2PUDP" + Core.CENTENA_FORMAT.format(CONNECTION_ID++));
             // Toda connexão recebe prioridade mínima.
             setPriority(Thread.MIN_PRIORITY);
+            Server.logTrace(getName() + " thread allocation.");
         }
         
         /**
@@ -216,6 +218,8 @@ public final class PeerUDP extends Server {
                                     result = "NOT MATCH";
                                 }
                             }
+                        } catch (UnknownHostException ex) {
+                            result = "INVALID";
                         } catch (Exception ex) {
                             Server.logError(ex);
                             result = "ERROR " + ex.getMessage();
@@ -227,7 +231,7 @@ public final class PeerUDP extends Server {
                         int index = token.indexOf(' ') + 1;
                         String reputation = token.substring(index);
                         StringTokenizer tokenizer = new StringTokenizer(reputation, " ");
-                        if (tokenizer.countTokens() == 3) {
+                        if (tokenizer.countTokens() > 2) {
                             String key = tokenizer.nextToken();
                             String ham = tokenizer.nextToken();
                             String spam = tokenizer.nextToken();
@@ -267,7 +271,8 @@ public final class PeerUDP extends Server {
                         } else {
                             peer.addNotification();
                             address = peer.getAddress();
-                            result = peer.processReceive(token);
+//                            result = peer.processReceive(token);
+                            result = "INVALID";
                             type = "PEERB";
                         }
                     }
@@ -376,16 +381,17 @@ public final class PeerUDP extends Server {
         CONNECTION_USE.offer(connection);
     }
     
+    @Deprecated
     public void interruptTimeout() {
-        Connection connection = pollUsing();
-        if (connection != null) {
-            if (connection.isTimeout()) {
-                offerUsing(connection);
-                connection.interrupt();
-            } else {
-                offerUsing(connection);
-            }
-        }
+//        Connection connection = pollUsing();
+//        if (connection != null) {
+//            if (connection.isTimeout()) {
+//                offerUsing(connection);
+//                connection.interrupt();
+//            } else {
+//                offerUsing(connection);
+//            }
+//        }
     }
     
     /**
@@ -455,7 +461,7 @@ public final class PeerUDP extends Server {
                                 InetAddress ipAddress = packet.getAddress();
                                 String result = "ERROR: FATAL\n";
                                 Server.logError(ex);
-                                Server.logQueryDNSBL(time, ipAddress, null, result);
+                                Server.logQueryP2PUDP(time, ipAddress, null, result);
                                 offer(connection);
                             }
                         }

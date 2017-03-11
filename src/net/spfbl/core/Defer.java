@@ -136,6 +136,17 @@ public class Defer implements Serializable, Comparable<Defer> {
         return new Date(start);
     }
     
+    public static Defer getDefer(long start, String id) {
+        Defer defer = Defer.getExact(id);
+        if (defer == null) {
+            return null;
+        } else if (defer.start == start) {
+            return defer;
+        } else {
+            return null;
+        }
+    }
+    
     public static Defer getDefer(Date start, String id) {
         Defer defer = Defer.getExact(id);
         if (defer == null) {
@@ -245,6 +256,7 @@ public class Defer implements Serializable, Comparable<Defer> {
     public static void store() {
         if (isChanged()) {
             try {
+                Server.logTrace("storing defer.map");
                 long time = System.currentTimeMillis();
                 File file = new File("./data/defer.map");
                 HashMap<String,Defer> map = getMap();

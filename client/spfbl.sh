@@ -22,7 +22,7 @@
 # Atenção! Para utilizar este serviço, solicite a liberação das consultas
 # no servidor matrix.spfbl.net através do endereço leandro@spfbl.net
 # ou altere o matrix.spfbl.net deste script para seu servidor SPFBL próprio.
-# 
+#
 # Atenção! Para utilizar este script é necessário ter o netcat instalado:
 #
 #   sudo apt-get install netcat
@@ -41,14 +41,42 @@ PORTA_ADMIN="9875"
 OTP_SECRET=""
 DUMP_PATH="/tmp"
 QUERY_TIMEOUT="10"
+MAX_TIMEOUT="100"
+LOGPATH=/var/log/spfbl/
 
 export PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin
-version="2.5"
+version="2.10"
 
-head()
-{
+if [ ! -f "/tmp/SPFBL_TIMEOUT_COUNT" ]; then
+    touch /tmp/SPFBL_TIMEOUT_COUNT
+    chmod 777 /tmp/SPFBL_TIMEOUT_COUNT
+fi
+
+function head(){
+
 	echo "SPFBL v$version - by Leandro Rodrigues - leandro@spfbl.net"
 }
+
+function incrementTimeout() {
+
+	if [ ! -f "/tmp/SPFBL_TIMEOUT_COUNT" ] ; then
+		local COUNT=0
+	else
+		local COUNT=`cat /tmp/SPFBL_TIMEOUT_COUNT`
+	fi
+	local COUNT=`expr ${COUNT} + 1`
+	echo "${COUNT}" > /tmp/SPFBL_TIMEOUT_COUNT
+
+	return ${COUNT}
+
+}
+
+function resetTimeout() {
+
+	echo "0" > /tmp/SPFBL_TIMEOUT_COUNT
+
+}
+
 
 if [[ $OTP_SECRET == "" ]]; then
 	OTP_CODE=""
@@ -57,6 +85,26 @@ else
 fi
 
 case $1 in
+	'start')
+		echo "Iniciando serviço do SPFBL"
+        	cd /opt/spfbl/
+        	/usr/bin/java -jar /opt/spfbl/SPFBL.jar &
+		echo "OK"
+	;;
+	'stop')
+		echo "Parando o serviço do SPFBL"
+		echo "STORE" | nc $IP_SERVIDOR $PORTA_ADMIN
+		echo "SHUTDOWN" | nc $IP_SERVIDOR $PORTA_ADMIN
+		echo "OK"
+	;;
+	'restart')
+		echo "Reiniciando serviço do SPFBL"
+		cd /opt/spfbl/
+		echo "STORE" | nc $IP_SERVIDOR $PORTA_ADMIN
+		echo "SHUTDOWN" | nc $IP_SERVIDOR $PORTA_ADMIN
+		/usr/bin/java -jar /opt/spfbl/SPFBL.jar &
+		echo "OK"
+	;;
 	'version')
 		# Verifica a versão do servidor SPPFBL.
 		#
@@ -65,15 +113,33 @@ case $1 in
 		#    0: versão adquirida com sucesso.
 		#    1: erro ao tentar adiquirir versão.
 		#    2: timeout de conexão.
+		#    3: out of service.
 
 
 		response=$(echo $OTP_CODE"VERSION" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 		if [[ $response == "" ]]; then
-			response="TIMEOUT"
+			$(incrementTimeout)
+			if [ "$?" -le "$MAX_TIMEOUT" ]; then
+				response="TIMEOUT"
+			else
+				response="OUT OF SERVICE"
+			fi
+		else
+			$(resetTimeout)
 		fi
 
 		echo "$response"
+
+		if [[ $response == "OUT OF SERVICE" ]]; then
+			exit 3
+		elif [[ $response == "TIMEOUT" ]]; then
+			exit 2
+		elif [[ $response == "SPFBL-"* ]]; then
+			exit 0
+		else
+			exit 1
+		fi
 	;;
 	'firewall')
 		# Constroi um firewall pelo SPPFBL.
@@ -83,17 +149,27 @@ case $1 in
 		#    0: firwall adquirido com sucesso.
 		#    1: erro ao tentar adiquirir firewall.
 		#    2: timeout de conexão.
+		#    3: out of service.
 
 
 		response=$(echo $OTP_CODE"FIREWALL" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 		if [[ $response == "" ]]; then
-			response="TIMEOUT"
+			$(incrementTimeout)
+			if [ "$?" -le "$MAX_TIMEOUT" ]; then
+				response="TIMEOUT"
+			else
+				response="OUT OF SERVICE"
+			fi
+		else
+			$(resetTimeout)
 		fi
 
 		echo "$response"
 
-		if [[ $response == "TIMEOUT" ]]; then
+		if [[ $response == "OUT OF SERVICE" ]]; then
+			exit 3
+		elif [[ $response == "TIMEOUT" ]]; then
 			exit 2
 		elif [[ $response == "#!/bin/bash"* ]]; then
 			exit 0
@@ -109,15 +185,33 @@ case $1 in
 		#    0: fechamento de processos realizado com sucesso.
 		#    1: houve falha no fechamento dos processos.
 		#    2: timeout de conexão.
+		#    3: out of service.
 
 
 		response=$(echo $OTP_CODE"SHUTDOWN" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 		if [[ $response == "" ]]; then
-			response="TIMEOUT"
+			$(incrementTimeout)
+			if [ "$?" -le "$MAX_TIMEOUT" ]; then
+				response="TIMEOUT"
+			else
+				response="OUT OF SERVICE"
+			fi
+		else
+			$(resetTimeout)
 		fi
 
 		echo "$response"
+
+		if [[ $response == "OUT OF SERVICE" ]]; then
+			exit 3
+		elif [[ $response == "TIMEOUT" ]]; then
+			exit 2
+		elif [[ $response == "OK" ]]; then
+			exit 0
+		else
+			exit 1
+		fi
 	;;
 	'store')
 		# Comando para gravar o cache em disco.
@@ -127,15 +221,33 @@ case $1 in
 		#    0: gravar o cache em disco realizado com sucesso.
 		#    1: houve falha ao gravar o cache em disco.
 		#    2: timeout de conexão.
+		#    3: out of service.
 
 
 		response=$(echo $OTP_CODE"STORE" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 		if [[ $response == "" ]]; then
-			response="TIMEOUT"
+			$(incrementTimeout)
+			if [ "$?" -le "$MAX_TIMEOUT" ]; then
+				response="TIMEOUT"
+			else
+				response="OUT OF SERVICE"
+			fi
+		else
+			$(resetTimeout)
 		fi
 
 		echo "$response"
+
+		if [[ $response == "OUT OF SERVICE" ]]; then
+			exit 3
+		elif [[ $response == "TIMEOUT" ]]; then
+			exit 2
+		elif [[ $response == "OK" ]]; then
+			exit 0
+		else
+			exit 1
+		fi
 	;;
 	'tld')
 		case $2 in
@@ -149,6 +261,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -159,10 +272,27 @@ case $1 in
 					response=$(echo $OTP_CODE"TLD ADD $tld" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -175,6 +305,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -185,10 +316,27 @@ case $1 in
 					response=$(echo $OTP_CODE"TLD DROP $tld" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -198,6 +346,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -207,10 +356,25 @@ case $1 in
 					response=$(echo $OTP_CODE"TLD SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -231,6 +395,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -241,10 +406,27 @@ case $1 in
 					response=$(echo $OTP_CODE"PROVIDER ADD $provider" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -257,6 +439,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -267,10 +450,27 @@ case $1 in
 					response=$(echo $OTP_CODE"PROVIDER DROP $provider" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -280,6 +480,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -289,10 +490,25 @@ case $1 in
 					response=$(echo $OTP_CODE"PROVIDER SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -314,6 +530,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -324,10 +541,27 @@ case $1 in
 					response=$(echo $OTP_CODE"IGNORE ADD $ignore" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -341,6 +575,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -351,10 +586,27 @@ case $1 in
 					response=$(echo $OTP_CODE"IGNORE DROP $ignore" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -364,6 +616,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -373,10 +626,25 @@ case $1 in
 					response=$(echo $OTP_CODE"IGNORE SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -391,8 +659,8 @@ case $1 in
 				# Parâmetros de entrada:
 				#
 				#    1. sender: o remetente que deve ser bloqueado, com endereço completo.
-				#    1. domínio: o domínio que deve ser bloqueado, com arroba (ex: @dominio.com.br)
-				#    1. caixa postal: a caixa postal que deve ser bloqueada, com arroba (ex: www-data@)
+				#    2. domínio: o domínio que deve ser bloqueado, com arroba (ex: @dominio.com.br)
+				#    3. caixa postal: a caixa postal que deve ser bloqueada, com arroba (ex: www-data@)
 				#
 				#
 				# Códigos de saída:
@@ -400,6 +668,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -410,18 +679,35 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK ADD $sender" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
 				# Parâmetros de entrada:
 				#
 				#    1. sender: o remetente que deve ser desbloqueado, com endereço completo.
-				#    1. domínio: o domínio que deve ser desbloqueado, com arroba (ex: @dominio.com.br)
-				#    1. caixa postal: a caixa postal que deve ser desbloqueada, com arroba (ex: www-data@)
+				#    2. domínio: o domínio que deve ser desbloqueado, com arroba (ex: @dominio.com.br)
+				#    3. caixa postal: a caixa postal que deve ser desbloqueada, com arroba (ex: www-data@)
 				#
 				#
 				# Códigos de saída:
@@ -429,6 +715,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -439,10 +726,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK DROP $sender" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -454,6 +758,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -466,10 +771,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'find')
@@ -481,19 +801,35 @@ case $1 in
 				#    0: sem registro.
 				#    1: registro encontrado.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 block find token\n"
 				else
- 					token=$3
+					token=$3
 					response=$(echo $OTP_CODE"BLOCK FIND $token" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -517,6 +853,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -527,10 +864,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK ADD $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'split')
@@ -540,8 +894,10 @@ case $1 in
 				#
 				# Códigos de saída:
 				#
-				#    Nenhum: Observar o retorno do servidor.
-				#
+				#    0: adicionado com sucesso.
+				#    1: erro ao tentar adicionar bloqueio.
+				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -552,10 +908,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK SPLIT $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'overlap')
@@ -565,9 +938,11 @@ case $1 in
 				#
 				# Códigos de saída:
 				#
-				#    Nenhum: Observar o retorno do servidor.
-				#
-				
+				#    0: adicionado com sucesso.
+				#    1: erro ao tentar adicionar bloqueio.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
 
 				if [ $# -lt "3" ]; then
 					head
@@ -578,10 +953,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK OVERLAP $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'extract')
@@ -591,8 +983,11 @@ case $1 in
 				#
 				# Códigos de saída:
 				#
-				#    Nenhum: Observar o retorno do servidor.
-				#
+				#    0: adicionado com sucesso.
+				#    1: erro ao tentar adicionar bloqueio.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
 				if [ $# -lt "3" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 superblock extract IP\n"
@@ -602,10 +997,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK EXTRACT $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "EXTRACTED"* ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -621,6 +1033,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -631,10 +1044,27 @@ case $1 in
 					response=$(echo $OTP_CODE"BLOCK DROP $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -646,6 +1076,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -658,10 +1089,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -681,6 +1127,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar generico.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -691,12 +1138,21 @@ case $1 in
 					response=$(echo "GENERIC ADD $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
 
-					if [[ $response == "TIMEOUT" ]]; then
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
 						exit 2
 					elif [[ $response == "ADDED" ]]; then
 						exit 0
@@ -711,6 +1167,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar generico.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -721,17 +1178,24 @@ case $1 in
 					response=$(echo "GENERIC FIND $token" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
 
-					if [[ $response == "TIMEOUT" ]]; then
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
 						exit 2
-					elif [[ $response == "ADDED" ]]; then
-						exit 0
 					else
-						exit 1
+						exit 0
 					fi
 				fi
 			;;
@@ -745,6 +1209,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar generico.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -755,14 +1220,23 @@ case $1 in
 					response=$(echo "GENERIC DROP $sender" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
 
-					if [[ $response == "TIMEOUT" ]]; then
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
 						exit 2
-					elif [[ $response == "OK" ]]; then
+					elif [[ $response == "DROPPED" ]]; then
 						exit 0
 					else
 						exit 1
@@ -778,6 +1252,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar generico.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -790,17 +1265,24 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
 
-					if [[ $response == "TIMEOUT" ]]; then
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
 						exit 2
-					elif [[ $response == "OK" ]]; then
-						exit 0
 					else
-						exit 1
+						exit 0
 					fi
 				fi
 			;;
@@ -823,6 +1305,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -833,10 +1316,27 @@ case $1 in
 					response=$(echo $OTP_CODE"WHITE ADD $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'sender')
@@ -850,6 +1350,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -860,12 +1361,21 @@ case $1 in
 					response=$(echo "WHITE SENDER $sender" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
 
-					if [[ $response == "TIMEOUT" ]]; then
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
 						exit 2
 					elif [[ $response == "ADDED "* ]]; then
 						exit 0
@@ -887,6 +1397,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -897,10 +1408,27 @@ case $1 in
 					response=$(echo $OTP_CODE"WHITE DROP $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -911,6 +1439,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -919,10 +1448,25 @@ case $1 in
 					response=$(echo $OTP_CODE"WHITE SHOW" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -944,6 +1488,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -954,10 +1499,27 @@ case $1 in
 					response=$(echo $OTP_CODE"WHITE ADD $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -971,6 +1533,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -981,10 +1544,27 @@ case $1 in
 					response=$(echo $OTP_CODE"WHITE DROP $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -995,6 +1575,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar bloqueio.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -1007,10 +1588,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -1034,6 +1630,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "5" ]; then
 					head
@@ -1047,14 +1644,31 @@ case $1 in
 					if [ -n "$6" ]; then
 						email=$6
 					fi
-					
+
 					response=$(echo $OTP_CODE"CLIENT ADD $cidr $domain $option $email" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'set')
@@ -1070,6 +1684,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "5" ]; then
 					head
@@ -1083,14 +1698,29 @@ case $1 in
 					if [ -n "$6" ]; then
 						email=$6
 					fi
-					
+
 					response=$(echo $OTP_CODE"CLIENT SET $cidr $domain $option $email" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'drop')
@@ -1103,6 +1733,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1113,10 +1744,27 @@ case $1 in
 					response=$(echo $OTP_CODE"CLIENT DROP $cidr" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -1125,6 +1773,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -1134,10 +1783,25 @@ case $1 in
 					response=$(echo $OTP_CODE"CLIENT SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -1159,6 +1823,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adiciona.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "4" ]; then
 					head
@@ -1170,10 +1835,27 @@ case $1 in
 					response=$(echo $OTP_CODE"USER ADD $email $nome" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -1186,6 +1868,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1196,10 +1879,27 @@ case $1 in
 					response=$(echo $OTP_CODE"USER DROP $email" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -1209,6 +1909,8 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
+
 				if [ $# -lt "2" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 user show\n"
@@ -1216,10 +1918,25 @@ case $1 in
 					response=$(echo $OTP_CODE"USER SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -1241,6 +1958,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1256,10 +1974,27 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -1272,6 +2007,7 @@ case $1 in
 				#    0: removido com sucesso.
 				#    1: erro ao tentar remover.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1286,10 +2022,27 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -1299,6 +2052,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -1313,10 +2067,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'set')
@@ -1331,6 +2100,7 @@ case $1 in
 				#    0: setado com sucesso.
 				#    1: erro ao tentar setar opções.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "5" ]; then
 					head
@@ -1343,10 +2113,25 @@ case $1 in
 					response=$(echo $OTP_CODE"PEER SET $host $send $receive" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'ping')
@@ -1359,6 +2144,7 @@ case $1 in
 				#    0: executado com sucesso.
 				#    1: erro ao tentar executar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1369,10 +2155,25 @@ case $1 in
 					response=$(echo $OTP_CODE"PEER PING $host" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'send')
@@ -1385,6 +2186,7 @@ case $1 in
 				#    0: executado com sucesso.
 				#    1: erro ao tentar executar.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -1395,10 +2197,25 @@ case $1 in
 					response=$(echo $OTP_CODE"PEER SEND $host" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -1419,6 +2236,8 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
+
 				if [ $# -lt "3" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 retention show { host | all }\n"
@@ -1432,10 +2251,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'release')
@@ -1448,6 +2282,8 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
+
 				if [ $# -lt "3" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 retention release { sender | all }\n"
@@ -1461,10 +2297,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			'reject')
@@ -1477,6 +2328,8 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar.
 				#    2: timeout de conexão.
+				#    3: out of service.
+
 				if [ $# -lt "3" ]; then
 					head
 					printf "Invalid Parameters. Syntax: $0 retention reject { sender | all }\n"
@@ -1490,10 +2343,25 @@ case $1 in
 					fi
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -1510,17 +2378,36 @@ case $1 in
 		#    0: listado com sucesso.
 		#    1: lista vazia.
 		#    2: timeout de conexão.
+		#    3: out of service.
+
 		if [[ $2 == "cidr" ]]; then
 			response=$(echo $OTP_CODE"REPUTATION CIDR" | nc $IP_SERVIDOR $PORTA_ADMIN)
 		else
 			response=$(echo $OTP_CODE"REPUTATION" | nc $IP_SERVIDOR $PORTA_ADMIN)
 		fi
-		
+
 		if [[ $response == "" ]]; then
-			response="TIMEOUT"
+			$(incrementTimeout)
+			if [ "$?" -le "$MAX_TIMEOUT" ]; then
+				response="TIMEOUT"
+			else
+				response="OUT OF SERVICE"
+			fi
+		else
+			$(resetTimeout)
 		fi
 
 		echo "$response"
+
+		if [[ $response == "OUT OF SERVICE" ]]; then
+			exit 3
+		elif [[ $response == "TIMEOUT" ]]; then
+			exit 2
+		elif [[ $response == "EMPTY" ]]; then
+			exit 0
+		else
+			exit 1
+		fi
 	;;
 	'clear')
 		# Parâmetros de entrada:
@@ -1534,19 +2421,36 @@ case $1 in
 		#    1: registro não encontrado em cache.
 		#    2: erro ao processar atualização.
 		#    3: timeout de conexão.
+		#    4: out of service.
+
 		if [ $# -lt "2" ]; then
 			head
-			printf "Invalid Parameters. Syntax: $0 superclear hostname\n"
+			printf "Invalid Parameters. Syntax: $0 clear hostname\n"
 		else
 			hostname=$2
 
 			response=$(echo $OTP_CODE"CLEAR $hostname" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 			if [[ $response == "" ]]; then
-				response="TIMEOUT"
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					response="TIMEOUT"
+				else
+					response="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
 			fi
 
 			echo "$response"
+
+			if [[ $response == "OUT OF SERVICE" ]]; then
+				exit 3
+			elif [[ $response == "TIMEOUT" ]]; then
+				exit 2
+			else
+				exit 0
+			fi
 		fi
 	;;
 	'refresh')
@@ -1561,6 +2465,7 @@ case $1 in
 		#    1: registro não encontrado em cache.
 		#    2: erro ao processar atualização.
 		#    3: timeout de conexão.
+		#    4: out of service.
 
 		if [ $# -lt "2" ]; then
 			head
@@ -1571,10 +2476,25 @@ case $1 in
 			response=$(echo $OTP_CODE"REFRESH $hostname" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 			if [[ $response == "" ]]; then
-				response="TIMEOUT"
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					response="TIMEOUT"
+				else
+					response="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
 			fi
 
 			echo "$response"
+
+			if [[ $response == "OUT OF SERVICE" ]]; then
+				exit 3
+			elif [[ $response == "TIMEOUT" ]]; then
+				exit 2
+			else
+				exit 0
+			fi
 		fi
 	;;
 	'analise')
@@ -1589,49 +2509,108 @@ case $1 in
 		#    1: registro não encontrado em cache.
 		#    2: erro ao processar atualização.
 		#    3: timeout de conexão.
+		#    4: out of service.
+
 		case $2 in
 			'show')
 				response=$(echo $OTP_CODE"ANALISE SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
-				
+
 				if [[ $response == "" ]]; then
-					response="TIMEOUT"
+					$(incrementTimeout)
+					if [ "$?" -le "$MAX_TIMEOUT" ]; then
+						response="TIMEOUT"
+					else
+						response="OUT OF SERVICE"
+					fi
+				else
+					$(resetTimeout)
 				fi
 
 				echo "$response"
+
+				if [[ $response == "OUT OF SERVICE" ]]; then
+					exit 3
+				elif [[ $response == "TIMEOUT" ]]; then
+					exit 2
+				else
+					exit 0
+				fi
 			;;
 			'dump')
 				response=$(echo $OTP_CODE"ANALISE DUMP $3" | nc $IP_SERVIDOR $PORTA_ADMIN)
-				
+
 				if [[ $response == "" ]]; then
-					response="TIMEOUT"
+					$(incrementTimeout)
+					if [ "$?" -le "$MAX_TIMEOUT" ]; then
+						response="TIMEOUT"
+					else
+						response="OUT OF SERVICE"
+					fi
+				else
+					$(resetTimeout)
 				fi
 
 				echo "$response"
+
+				if [[ $response == "OUT OF SERVICE" ]]; then
+					exit 3
+				elif [[ $response == "TIMEOUT" ]]; then
+					exit 2
+				else
+					exit 0
+				fi
 			;;
 			'drop')
 
 				response=$(echo $OTP_CODE"ANALISE DROP $3" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 				if [[ $response == "" ]]; then
-					response="TIMEOUT"
+					$(incrementTimeout)
+					if [ "$?" -le "$MAX_TIMEOUT" ]; then
+						response="TIMEOUT"
+					else
+						response="OUT OF SERVICE"
+					fi
+				else
+					$(resetTimeout)
 				fi
 
 				echo "$response"
-			;;
-			[0-9]*)
-				ip=$2
 
-				response=$(echo $OTP_CODE"ANALISE $ip" | nc $IP_SERVIDOR $PORTA_ADMIN)
-
-				if [[ $response == "" ]]; then
-					response="TIMEOUT"
+				if [[ $response == "OUT OF SERVICE" ]]; then
+					exit 3
+				elif [[ $response == "TIMEOUT" ]]; then
+					exit 2
+				else
+					exit 0
 				fi
-
-				echo "$response"
 			;;
 			*)
-				head
-				printf "Invalid Parameters. Syntax: $0 analise <ip> or {show | dump | drop} \n"
+				ip=$2
+				list=$3
+
+				response=$(echo $OTP_CODE"ANALISE $ip $list" | nc $IP_SERVIDOR $PORTA_ADMIN)
+
+				if [[ $response == "" ]]; then
+					$(incrementTimeout)
+					if [ "$?" -le "$MAX_TIMEOUT" ]; then
+						response="TIMEOUT"
+					else
+						response="OUT OF SERVICE"
+					fi
+				else
+					$(resetTimeout)
+				fi
+
+				echo "$response"
+
+				if [[ $response == "OUT OF SERVICE" ]]; then
+					exit 3
+				elif [[ $response == "TIMEOUT" ]]; then
+					exit 2
+				else
+					exit 0
+				fi
 			;;
 		esac
 	;;
@@ -1664,6 +2643,8 @@ case $1 in
 		#    9: timeout de conexão.
 		#    10: domínio inexistente.
 		#    11: parâmetros inválidos.
+		#    12: out of service.
+		#    13: remetente inexistente.
 
 		if [ $# -lt "4" ]; then
 			head
@@ -1676,15 +2657,26 @@ case $1 in
 			qualifier=$(echo $OTP_CODE"CHECK '$ip' '$email' '$helo'" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 			if [[ $qualifier == "" ]]; then
-				qualifier="TIMEOUT"
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					qualifier="TIMEOUT"
+				else
+					qualifier="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
 			fi
 
 			echo "$qualifier"
 
-			if [[ $qualifier == "TIMEOUT" ]]; then
+			if [[ $qualifier == "OUT OF SERVICE" ]]; then
+				exit 12
+			elif [[ $qualifier == "TIMEOUT" ]]; then
 				exit 9
 			elif [[ $qualifier == "NXDOMAIN" ]]; then
 				exit 10
+			elif [[ $qualifier == "NXSENDER" ]]; then
+				exit 13
 			elif [[ $qualifier == "LISTED"* ]]; then
 				exit 8
 			elif [[ $qualifier == "INVALID" ]]; then
@@ -1731,9 +2723,9 @@ case $1 in
 			head
 			printf "Invalid Parameters. Syntax: $0 spam [ticketid or file]\n"
 		else
-                        if [[ $2 =~ ^http://.+/spam/[a-zA-Z0-9%_-]{44,1024}$ ]]; then
-                                # O parâmentro é uma URL de denúncia SPFBL.
-                                url=$2
+			if [[ $2 =~ ^http://.+/[a-zA-Z0-9%_-]{44,}$ ]]; then
+				# O parâmentro é uma URL de denúncia SPFBL.
+				url=$2
 			elif [[ $2 =~ ^[a-zA-Z0-9/+=_-]{44,1024}$ ]]; then
 				# O parâmentro é um ticket SPFBL.
 				ticket=$2
@@ -1743,12 +2735,12 @@ case $1 in
 
 				if [ -e "$file" ]; then
 					# Extrai o ticket incorporado no arquivo.
-					ticket=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE) \K([0-9a-zA-Z\+/=]+)$" $file)
+					ticket=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K([0-9a-zA-Z:/._-]+)$" $file)
 
 					if [ $? -gt 0 ]; then
 
 						# Extrai o ticket incorporado no arquivo.
-						url=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE) \K(http://.+/spam/[0-9a-zA-Z\+/=]+)$" $file)
+						url=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K(http://.+/[0-9a-zA-Z_-]+)" $file)
 
 						if [ $? -gt 0 ]; then
 							echo "Nenhum ticket SPFBL foi encontrado na mensagem."
@@ -1788,7 +2780,7 @@ case $1 in
 				fi
 			else
 				# Registra reclamação SPFBL via HTTP.
-                                resposta=$(curl -X PUT -s -m 3 $url)
+				resposta=$(curl -X PUT -s -m 3 $url)
 				if [[ $? == "28" ]]; then
 					echo "A reclamação SPFBL não foi enviada por timeout."
 					exit 4
@@ -1802,6 +2794,311 @@ case $1 in
 					echo "A reclamação SPFBL não foi enviada: $resposta"
 					exit 3
 				fi
+			fi
+		fi
+	;;
+	'link')
+		# Códigos de saída:
+		#
+		#    0: nenhum bloqueio encontrado.
+		#    1: pelo meno um link está bloqueado e o ticket foi denunciado.
+		#    2: timeout de conexão.
+		#    3: consulta inválida.
+		#    4: out of service.
+		#    5: hold message.
+		#    6: flag message.
+
+		if [ $# -lt "2" ]; then
+			head
+			printf "Faltando parametro(s).\nSintaxe: $0 link <ticket> <links>\n"
+		else
+			ticket=$2
+			links=$3
+
+			response=$(echo "LINK $ticket $links" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+			if [[ $response == "" ]]; then
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					response="TIMEOUT"
+				else
+					response="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
+			fi
+
+			echo "$response"
+
+			if [[ $response == "OUT OF SERVICE" ]]; then
+				exit 4
+			elif [[ $response == "TIMEOUT" ]]; then
+				exit 2
+			elif [[ $response == "CLEAR" ]]; then
+				exit 0
+			elif [[ $response == "HOLD" ]]; then
+				exit 5
+			elif [[ $response == "FLAG" ]]; then
+				exit 6
+			elif [[ $response == "BLOCKED"* ]]; then
+				exit 1
+			else
+				exit 3
+			fi
+		fi
+	;;
+	'malware')
+		# Este comando procura e extrai o ticket de consulta SPFBL de uma mensagem de e-mail se o parâmetro for um arquivo.
+		#
+		# Com posse do ticket, ele envia a reclamação ao serviço SPFBL para contabilização de reclamação como malware encontrado.
+		#
+		# Parâmetros de entrada:
+		#  1. o arquivo de e-mail com o ticket ou o ticket sozinho.
+		#
+		# Códigos de saída:
+		#  0. Ticket enviado com sucesso.
+		#  1. Arquivo inexistente.
+		#  2. Arquivo não contém ticket.
+		#  3. Erro no envio do ticket.
+		#  4. Timeout no envio do ticket.
+		#  5. Parâmetro inválido.
+		#  6. Ticket inválido.
+
+		if [ $# -lt "2" ]; then
+			head
+			printf "Invalid Parameters. Syntax: $0 malware [ticketid or file]\n"
+		else
+			if [[ $2 =~ ^http://.+/[a-zA-Z0-9%_-]{44,}$ ]]; then
+				# O parâmentro é uma URL de denúncia SPFBL.
+				url=$2
+			elif [[ $2 =~ ^[a-zA-Z0-9/+=_-]{44,1024}$ ]]; then
+				# O parâmentro é um ticket SPFBL.
+				ticket=$2
+			elif [ -f "$2" ]; then
+				# O parâmetro é um arquivo.
+				file=$2
+
+				if [ -e "$file" ]; then
+					# Extrai o ticket incorporado no arquivo.
+					ticket=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K([0-9a-zA-Z\+/=]+)$" $file)
+
+					if [ $? -gt 0 ]; then
+
+						# Extrai o ticket incorporado no arquivo.
+						url=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K(http://.+/[0-9a-zA-Z\+/=]+)$" $file)
+
+						if [ $? -gt 0 ]; then
+							echo "Nenhum ticket SPFBL foi encontrado na mensagem."
+							exit 2
+						fi
+					fi
+				else
+					echo "O arquivo não existe."
+					exit 1
+				fi
+			else
+				echo "O parâmetro passado não corresponde a um arquivo nem a um ticket."
+				exit 5
+			fi
+
+			if [[ -z $url ]]; then
+				if [[ -z $ticket ]]; then
+					echo "Ticket SPFBL inválido."
+					exit 6
+				else
+					# Registra reclamação SPFBL como malware.
+					resposta=$(echo $OTP_CODE"MALWARE $ticket $3" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $resposta == "" ]]; then
+						echo "A reclamação SPFBL não foi enviada por timeout."
+						exit 4
+					elif [[ $resposta == "OK"* ]]; then
+						echo "Reclamação SPFBL enviada com sucesso."
+						exit 0
+					elif [[ $resposta == "ERROR: DECRYPTION" ]]; then
+						echo "Ticket SPFBL inválido."
+						exit 6
+					else
+						echo "A reclamação SPFBL não foi enviada: $resposta"
+						exit 3
+					fi
+				fi
+			else
+				### Atenção! Reclamaão de malware não implementada em HTTP ainda.
+				# Registra reclamação SPFBL via HTTP.
+				resposta=$(curl -X PUT -s -m 3 $url)
+				if [[ $? == "28" ]]; then
+					echo "A reclamação SPFBL não foi enviada por timeout."
+					exit 4
+				elif [[ $resposta == "OK"* ]]; then
+					echo "Reclamação SPFBL enviada com sucesso."
+					exit 0
+				elif [[ $resposta == "ERROR: DECRYPTION" ]]; then
+					echo "Ticket SPFBL inválido."
+					exit 6
+				else
+					echo "A reclamação SPFBL não foi enviada: $resposta"
+					exit 3
+				fi
+			fi
+		fi
+	;;
+	'from')
+		# Códigos de saída:
+		#
+		#    0: nenhum bloqueio encontrado.
+		#    1: pelo meno um endereço está bloqueado e o ticket foi denunciado.
+		#    2: timeout de conexão.
+		#    3: consulta inválida.
+		#    4: out of service.
+		#   17: remetente colocado em lista branca.
+
+		if [ $# -lt "3" ]; then
+			head
+			printf "Faltando parametro(s).\nSintaxe: $0 from <ticket> From:<from> Reply-To:<replyto> List-Unsubscribe:<url>\n"
+		else
+			ticket=$2
+			from=$3
+			replyto=$4
+			unsubscribe=$5
+
+			response=$(echo "FROM $ticket $from $replyto $unsubscribe" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+			if [[ $response == "" ]]; then
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					response="TIMEOUT"
+				else
+					response="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
+			fi
+
+			echo "$response"
+
+			if [[ $response == "OUT OF SERVICE" ]]; then
+				exit 4
+			elif [[ $response == "TIMEOUT" ]]; then
+				exit 2
+			elif [[ $response == "CLEAR" ]]; then
+				exit 0
+			elif [[ $response == "WHITE" ]]; then
+				exit 17
+			elif [[ $response == "BLOCKED"* ]]; then
+				exit 1
+			else
+				exit 3
+			fi
+		fi
+	;;
+	'header')
+		# Códigos de saída:
+		#
+		#    0: nenhum bloqueio encontrado.
+		#    1: pelo meno um endereço está bloqueado e o ticket foi denunciado.
+		#    2: timeout de conexão.
+		#    3: consulta inválida.
+		#    4: out of service.
+		#   17: remetente colocado em lista branca.
+
+		if [ $# -lt "3" ]; then
+			head
+			printf "Faltando parametro(s).\nSintaxe: $0 header <ticket> 'From:[<from>]' 'Reply-To:[<replyto>]' 'Subject:[<subject>]' 'List-Unsubscribe:[<url>]'\n"
+		else
+			ticket=$2
+			from=$3
+			replyto=$4
+			subject=$5
+			unsubscribe=$6
+
+			response=$(echo "HEADER $ticket $from $replyto $subject $unsubscribe" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+			if [[ $response == "" ]]; then
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					response="TIMEOUT"
+				else
+					response="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
+			fi
+
+			echo "$response"
+
+			if [[ $response == "OUT OF SERVICE" ]]; then
+				exit 4
+			elif [[ $response == "TIMEOUT" ]]; then
+				exit 2
+			elif [[ $response == "CLEAR" ]]; then
+				exit 0
+			elif [[ $response == "WHITE" ]]; then
+				exit 17
+			elif [[ $response == "BLOCKED"* ]]; then
+				exit 1
+			else
+				exit 3
+			fi
+		fi
+	;;
+	'holding')
+		which exigrep > /dev/null
+
+		if [ $? -eq 0 ]; then
+
+			list=$(exiqgrep -z | egrep -o "([0-9a-zA-Z]{6}-){2}[0-9a-zA-Z]{2}")
+
+			if [ $? -eq 0 ]; then
+
+				while read -r message; do
+
+					ticket=$(exim -Mvh $message | grep -Pom 1 "Received-SPFBL: [A-Z]+ (http://.+/)?\K([0-9a-zA-Z_-]{44,})$")
+
+					if [ $? -eq 0 ]; then
+
+						response=$(echo $OTP_CODE"HOLDING $ticket" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+						if [[ $response == "" ]]; then
+
+							# Manter a mensagem congelada.
+							echo "Message $message keep frozen."
+
+						elif [[ $response == "WHITE" ]]; then
+
+							# Liberar a mensagem congelada 
+							# e entregar imedatamente.
+							exim -Mt $message
+							exim -M $message
+
+						elif [[ $response == "ACCEPT" ]]; then
+
+							# Liberar a mensagem congelada.
+							exim -Mt $message
+
+						elif [[ $response == "ERROR" ]]; then
+
+							# Manter a mensagem congelada.
+							echo "Message $message keep frozen."
+
+						elif [[ $response == "HOLD" ]]; then
+
+							# Manter a mensagem congelada.
+							echo "Message $message keep frozen."
+
+						elif [[ $response == "FLAG" ]]; then
+
+							# Liberar a mensagem congelada.
+							exim -Mt $message
+
+						else
+
+							# Remover a mensagem congelada.
+							exim -Mrm $message
+
+						fi
+					fi
+				done <<< "$list"
 			fi
 		fi
 	;;
@@ -1826,9 +3123,9 @@ case $1 in
 			head
 			printf "Invalid Parameters. Syntax: $0 ham [ticketid or file]\n"
 		else
-			if [[ $2 =~ ^http://.+/spam/[a-zA-Z0-9%_-]{44,1024}$ ]]; then
-	                        # O parâmentro é uma URL de denúncia SPFBL.
-	                        url=$2
+			if [[ $2 =~ ^http://.+/[a-zA-Z0-9%_-]{44,}$ ]]; then
+				# O parâmentro é uma URL de denúncia SPFBL.
+				url=$2
 			elif [[ $2 =~ ^[a-zA-Z0-9/+=_-]{44,1024}$ ]]; then
 				# O parâmentro é um ticket SPFBL.
 				ticket=$2
@@ -1838,12 +3135,12 @@ case $1 in
 
 				if [ -e "$file" ]; then
 					# Extrai o ticket incorporado no arquivo.
-					ticket=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE) \K([0-9a-zA-Z\+/=]+)$" $file)
+					ticket=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K([0-9a-zA-Z\+/=]+)$" $file)
 
 					if [ $? -gt 0 ]; then
 
 						# Extrai o ticket incorporado no arquivo.
-						url=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE) \K(http://.+/spam/[0-9a-zA-Z\+/=]+)$" $file)
+						url=$(grep -Pom 1 "^Received-SPFBL: (PASS|SOFTFAIL|NEUTRAL|NONE|WHITE|FLAG|HOLD) \K(http://.+/[0-9a-zA-Z\+/=]+)$" $file)
 
 						if [ $? -gt 0 ]; then
 							echo "Nenhum ticket SPFBL foi encontrado na mensagem."
@@ -1884,9 +3181,9 @@ case $1 in
 			else
 				# Registra reclamação SPFBL via HTTP.
 				spamURL=/spam/
-                                hamURL=/ham/
+				hamURL=/ham/
 				url=${url/$spamURL/$hamURL}
-                                resposta=$(curl -X PUT -s -m 3 $url)
+				resposta=$(curl -X PUT -s -m 3 $url)
 				if [[ $? == "28" ]]; then
 					echo "A revogação SPFBL não foi enviada por timeout."
 					exit 4
@@ -1935,10 +3232,13 @@ case $1 in
 		#    BLOCKED: rejeitar o recebimento da mensagem e informar à origem o bloqueio permanente.
 		#    FLAG: aceita o recebimento e redirecione a mensagem para a pasta SPAM.
 		#    SPAMTRAP: discaratar silenciosamente a mensagem e informar à origem que a mensagem foi recebida com sucesso.
+		#    INEXISTENT: rejeitar a mensagem e informar que o destinatário não existe.
 		#    GREYLIST: atrasar a mensagem informando à origem ele está em greylisting.
 		#    NXDOMAIN: o domínio do remetente é inexistente.
+		#    NXSENDER: a conta do remetente é inexistente.
 		#    INVALID: o endereço do remetente é inválido.
 		#    WHITE: aceitar imediatamente a mensagem.
+		#    HOLD: congelar a entrega da mensagem.
 		#
 		# Códigos de saída:
 		#
@@ -1960,6 +3260,10 @@ case $1 in
 		#    15: mensagem originada de uma rede local.
 		#    16: mensagem marcada como SPAM.
 		#    17: remetente em lista branca.
+		#    18: congelar mensagem.
+		#    19: inexistente.
+		#    20: out of service.
+		#    21: remetente inexistente.
 
 		if [ $# -lt "5" ]; then
 			head
@@ -1973,15 +3277,26 @@ case $1 in
 			qualifier=$(echo $OTP_CODE"SPF '$ip' '$email' '$helo' '$recipient'" | nc -w $QUERY_TIMEOUT $IP_SERVIDOR $PORTA_SERVIDOR)
 
 			if [[ $qualifier == "" ]]; then
-				qualifier="TIMEOUT"
+				$(incrementTimeout)
+				if [ "$?" -le "$MAX_TIMEOUT" ]; then
+					qualifier="TIMEOUT"
+				else
+					qualifier="OUT OF SERVICE"
+				fi
+			else
+				$(resetTimeout)
 			fi
 
 			echo "$qualifier"
 
-			if [[ $qualifier == "TIMEOUT" ]]; then
+			if [[ $qualifier == "OUT OF SERVICE" ]]; then
+				exit 20
+			elif [[ $qualifier == "TIMEOUT" ]]; then
 				exit 9
 			elif [[ $qualifier == "NXDOMAIN" ]]; then
 				exit 13
+			elif [[ $qualifier == "NXSENDER" ]]; then
+				exit 21
 			elif [[ $qualifier == "GREYLIST" ]]; then
 				exit 12
 			elif [[ $qualifier == "INVALID" ]]; then
@@ -1992,8 +3307,12 @@ case $1 in
 				exit 15
 			elif [[ $qualifier == "FLAG"* ]]; then
 				exit 16
+			elif [[ $qualifier == "HOLD"* ]]; then
+				exit 18
 			elif [[ $qualifier == "SPAMTRAP" ]]; then
 				exit 11
+			elif [[ $qualifier == "INEXISTENT" ]]; then
+				exit 19
 			elif [[ $qualifier == "BLOCKED"* ]]; then
 				exit 10
 			elif [[ $qualifier == "LISTED"* ]]; then
@@ -2009,9 +3328,9 @@ case $1 in
 			elif [[ $qualifier == "WHITE "* ]]; then
 				exit 17
 			elif [[ $qualifier == "FAIL "* ]]; then
-			        # Retornou FAIL com ticket então
-			        # significa que está em whitelist.
-			        # Retornar como se fosse SOFTFAIL.
+				# Retornou FAIL com ticket então
+				# significa que está em whitelist.
+				# Retornar como se fosse SOFTFAIL.
 				exit 4
 			elif [[ $qualifier == "FAIL" ]]; then
 				exit 3
@@ -2037,6 +3356,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar armadilha.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -2047,10 +3367,27 @@ case $1 in
 					response=$(echo $OTP_CODE"TRAP ADD $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -2064,6 +3401,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar armadilha.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -2074,10 +3412,27 @@ case $1 in
 					response=$(echo $OTP_CODE"TRAP DROP $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -2088,6 +3443,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar armadilhas.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -2096,15 +3452,343 @@ case $1 in
 					response=$(echo $OTP_CODE"TRAP SHOW" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
 				head
 				printf "Syntax:\n    $0 trap add recipient\n    $0 trap drop recipient\n    $0 trap show\n"
+			;;
+		esac
+	;;
+	'inexistent')
+		case $2 in
+			'add')
+				# Parâmetros de entrada:
+				#
+				#    1. recipient: o destinatário que deve ser considerado inexistente.
+				#
+				#
+				# Códigos de saída:
+				#
+				#    0: adicionado com sucesso.
+				#    1: erro ao tentar adicionar destinatário inexistente.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent add recipient\n"
+				else
+					recipient=$3
+
+					response=$(echo $OTP_CODE"INEXISTENT ADD $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
+				fi
+			;;
+			'drop')
+				# Parâmetros de entrada:
+				#
+				#    1. recipient: o destinatário que não deve ser considerado inexistente.
+				#
+				#
+				# Códigos de saída:
+				#
+				#    0: removido com sucesso.
+				#    1: erro ao tentar remover endereço.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent drop recipient\n"
+				else
+					recipient=$3
+
+					response=$(echo $OTP_CODE"INEXISTENT DROP $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
+				fi
+			;;
+			'show')
+				# Parâmetros de entrada: nenhum.
+				#
+				# Códigos de saída:
+				#
+				#    0: visualizado com sucesso.
+				#    1: erro ao tentar visualizar inexistentes.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "2" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent show\n"
+				else
+					response=$(echo $OTP_CODE"INEXISTENT SHOW" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
+				fi
+			;;
+			'is')
+				# Parâmetros de entrada: nenhum.
+				#
+				# Códigos de saída:
+				#
+				#    0: não é inexistente.
+				#    1: é inexistente.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent is <recipient>\n"
+				else
+					recipient=$3
+					response=$(echo $OTP_CODE"INEXISTENT IS $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "TRUE" ]]; then
+						exit 1
+					else
+						exit 0
+					fi
+				fi
+			;;
+			*)
+				head
+				printf "Syntax:\n    $0 inexistent add recipient\n    $0 inexistent drop recipient\n    $0 inexistent show\n"
+			;;
+		esac
+	;;
+	'superinexistent')
+		case $2 in
+			'add')
+				# Parâmetros de entrada:
+				#
+				#    1. recipient: o destinatário que deve ser considerado inexistente.
+				#
+				#
+				# Códigos de saída:
+				#
+				#    0: adicionado com sucesso.
+				#    1: erro ao tentar adicionar destinatário inexistente.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent add recipient\n"
+				else
+					recipient=$3
+
+					response=$(echo $OTP_CODE"INEXISTENT ADD $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
+				fi
+			;;
+			'drop')
+				# Parâmetros de entrada:
+				#
+				#    1. recipient: o destinatário que não deve ser considerado inexistente.
+				#
+				#
+				# Códigos de saída:
+				#
+				#    0: removido com sucesso.
+				#    1: erro ao tentar remover endereço.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent drop recipient\n"
+				else
+					recipient=$3
+
+					response=$(echo $OTP_CODE"INEXISTENT DROP $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
+				fi
+			;;
+			'show')
+				# Parâmetros de entrada: nenhum.
+				#
+				# Códigos de saída:
+				#
+				#    0: visualizado com sucesso.
+				#    1: erro ao tentar visualizar inexistentes.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "2" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 inexistent show\n"
+				else
+					response=$(echo $OTP_CODE"INEXISTENT SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
+				fi
+			;;
+			*)
+				head
+				printf "Syntax:\n    $0 inexistent add recipient\n    $0 inexistent drop recipient\n    $0 inexistent show\n"
 			;;
 		esac
 	;;
@@ -2121,6 +3805,7 @@ case $1 in
 				#    0: adicionado com sucesso.
 				#    1: erro ao tentar adicionar endereço.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -2131,10 +3816,27 @@ case $1 in
 					response=$(echo $OTP_CODE"NOREPLY ADD $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "ADDED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'drop')
@@ -2148,6 +3850,7 @@ case $1 in
 				#    0: desbloqueado com sucesso.
 				#    1: erro ao tentar adicionar endereço.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "3" ]; then
 					head
@@ -2158,10 +3861,27 @@ case $1 in
 					response=$(echo $OTP_CODE"NOREPLY DROP $recipient" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "DROPPED" ]]; then
+						exit 0
+					else
+						exit 1
+					fi
 				fi
 			;;
 			'show')
@@ -2172,6 +3892,7 @@ case $1 in
 				#    0: visualizado com sucesso.
 				#    1: erro ao tentar visualizar endereços.
 				#    2: timeout de conexão.
+				#    3: out of service.
 
 				if [ $# -lt "2" ]; then
 					head
@@ -2180,10 +3901,70 @@ case $1 in
 					response=$(echo $OTP_CODE"NOREPLY SHOW" | nc $IP_SERVIDOR $PORTA_ADMIN)
 
 					if [[ $response == "" ]]; then
-						response="TIMEOUT"
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
 					fi
 
 					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					else
+						exit 0
+					fi
+				fi
+			;;
+			'is')
+				# Parâmetros de entrada:
+				#
+				#    1. recipient: o destinatário que o SPFBL deve verificar se pode responder e-mail.
+				#
+				#
+				# Códigos de saída:
+				#
+				#    0: pode reponder e-mail.
+				#    1: não pode reponder e-mail.
+				#    2: timeout de conexão.
+				#    3: out of service.
+
+				if [ $# -lt "3" ]; then
+					head
+					printf "Invalid Parameters. Syntax: $0 noreply is <recipient>\n"
+				else
+					recipient=$3
+
+					response=$(echo $OTP_CODE"NOREPLY IS $recipient" | nc $IP_SERVIDOR $PORTA_SERVIDOR)
+
+					if [[ $response == "" ]]; then
+						$(incrementTimeout)
+						if [ "$?" -le "$MAX_TIMEOUT" ]; then
+							response="TIMEOUT"
+						else
+							response="OUT OF SERVICE"
+						fi
+					else
+						$(resetTimeout)
+					fi
+
+					echo "$response"
+
+					if [[ $response == "OUT OF SERVICE" ]]; then
+						exit 3
+					elif [[ $response == "TIMEOUT" ]]; then
+						exit 2
+					elif [[ $response == "TRUE" ]]; then
+						exit 1
+					else
+						exit 0
+					fi
 				fi
 			;;
 			*)
@@ -2213,7 +3994,7 @@ case $1 in
 			head
 			printf "Invalid Parameters. Syntax: $0 load path\n"
 		else
-			file=$1
+			file=$2
 			if [ -f $file ]; then
 				for line in `cat $file`; do
 					echo -n "Adding $line ... "
@@ -2224,11 +4005,108 @@ case $1 in
 			fi
 		fi
 	;;
+	'backup')
+		# Parâmetros de entrada: dias p/ reter o backup.
+		#
+		# Códigos de saída: nenhum.
+
+		fazBackup(){
+
+			PASTABKP=/opt/spfbl/backup
+			NOW=$(date +"%d-%m-%Y-%H-%S")
+			if [ ! -d $PASTABKP ]; then
+				mkdir $PASTABKP
+			fi
+
+			echo "STORE" | nc 127.0.0.1 9875
+			echo "DUMP" | nc 127.0.01 9875 > "$PASTABKP"/dump-"$NOW".txt
+			tar -zcf "$PASTABKP"/spfbl-folder-"$NOW".tar /opt/spfbl --exclude "$PASTABKP" &> /dev/null
+			find $PASTABKP -mtime +"$DAYSTORETAIN" -exec rm {} \;
+		}
+
+		if [ $# -lt "2" ]; then
+			DAYSTORETAIN=60
+			fazBackup
+		else
+			DAYSTORETAIN=$2
+			fazBackup
+		fi
+	;;
+	'stats')
+		#
+		# gera estatistica diaria
+		# saida em linha de comando
+		#
+		# Formato: spfbl.sh stats AAAA-MM-DD
+		# Exemplo: spfbl.sh stats 2017-01-31
+		#
+		# apenas "spfbl.sh stats" mostra o resultado do dia
+		#
+
+		# Escolhe a data de log
+		if [ -d $LOGPATH ]; then
+			if [[ $2 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+				TODAY=$2
+			else
+				TODAY=`date +%Y-%m-%d`
+			fi
+
+			BLOCKED=$(grep -c BLOCKED "$LOGPATH"spfbl."$TODAY".log)
+			FAIL=$(grep -c ' FAIL' "$LOGPATH"spfbl."$TODAY".log)
+			FLAG=$(grep -c FLAG "$LOGPATH"spfbl."$TODAY".log)
+			GREYLIST=$(grep -c GREYLIST "$LOGPATH"spfbl."$TODAY".log)
+			HOLD=$(grep -c HOLD "$LOGPATH"spfbl."$TODAY".log)
+			INTERRUPTED=$(grep -c INTERRUPTED "$LOGPATH"spfbl."$TODAY".log)
+			INVALID=$(grep -c INVALID "$LOGPATH"spfbl."$TODAY".log)
+			LISTED=$(grep -c LISTED "$LOGPATH"spfbl."$TODAY".log)
+			NEUTRAL=$(grep -c NEUTRAL "$LOGPATH"spfbl."$TODAY".log)
+			NONE=$(grep -c NONE "$LOGPATH"spfbl."$TODAY".log)
+			NXDOMAIN=$(grep -c NXDOMAIN "$LOGPATH"spfbl."$TODAY".log)
+			NXSENDER=$(grep -c NXSENDER "$LOGPATH"spfbl."$TODAY".log)
+			PASS=$(grep -c PASS "$LOGPATH"spfbl."$TODAY".log)
+			WHITE=$(grep -c WHITE "$LOGPATH"spfbl."$TODAY".log)
+			SOFTFAIL=$(grep -c SOFTFAIL "$LOGPATH"spfbl."$TODAY".log)
+			SPAMTRAP=$(grep -c SPAMTRAP "$LOGPATH"spfbl."$TODAY".log)
+			INEXISTENT=$(grep -c INEXISTENT "$LOGPATH"spfbl."$TODAY".log)
+			TIMEOUT=$(grep -c TIMEOUT "$LOGPATH"spfbl."$TODAY".log)
+
+			TOTALES=$(echo $BLOCKED + $FLAG + $GREYLIST + $HOLD + $LISTED + $NXDOMAIN + $NXSENDER + $PASS + $WHITE + $TIMEOUT + $NONE + $SOFTFAIL + $NEUTRAL + $INTERRUPTED + $SPAMTRAP + $INEXISTENT + $INVALID + $FAIL | bc)
+
+			echo '=========================='
+			echo '= SPFBL Daily Statistics ='
+			echo '=      '"$TODAY"'        ='
+			echo '=========================='
+			echo '     WHITE:' $(echo "scale=0;($WHITE*100) / $TOTALES" | bc)'% - '"$WHITE"
+			echo '      PASS:' $(echo "scale=0;($PASS*100) / $TOTALES" | bc)'% - '"$PASS"
+			echo '   BLOCKED:' $(echo "scale=0;($BLOCKED*100) / $TOTALES" | bc)'% - '"$BLOCKED"
+			echo '      FAIL:' $(echo "scale=0;($FAIL*100) / $TOTALES" | bc)'% - '"$FAIL"
+			echo '      FLAG:' $(echo "scale=0;($FLAG*100) / $TOTALES" | bc)'% - '"$FLAG"
+			echo '  GREYLIST:' $(echo "scale=0;($GREYLIST*100) / $TOTALES" | bc)'% - '"$GREYLIST"
+			echo '      HOLD:' $(echo "scale=0;($HOLD*100) / $TOTALES" | bc)'% - '"$HOLD"
+			echo '  INTRRPTD:' $(echo "scale=0;($INTERRUPTED*100) / $TOTALES" | bc)'% - '"$INTERRUPTED"
+			echo '   INVALID:' $(echo "scale=0;($INVALID*100) / $TOTALES" | bc)'% - '"$INVALID"
+			echo '    LISTED:' $(echo "scale=0;($LISTED*100) / $TOTALES" | bc)'% - '"$LISTED"
+			echo '   NEUTRAL:' $(echo "scale=0;($NEUTRAL*100) / $TOTALES" | bc)'% - '"$NEUTRAL"
+			echo '      NONE:' $(echo "scale=0;($NONE*100) / $TOTALES" | bc)'% - '"$NONE"
+			echo '  NXDOMAIN:' $(echo "scale=0;($NXDOMAIN*100) / $TOTALES" | bc)'% - '"$NXDOMAIN"
+			echo '  NXSENDER:' $(echo "scale=0;($NXSENDER*100) / $TOTALES" | bc)'% - '"$NXSENDER"
+			echo '  SOFTFAIL:' $(echo "scale=0;($SOFTFAIL*100) / $TOTALES" | bc)'% - '"$SOFTFAIL"
+			echo '  SPAMTRAP:' $(echo "scale=0;($SPAMTRAP*100) / $TOTALES" | bc)'% - '"$SPAMTRAP"
+			echo 'INEXISTENT:' $(echo "scale=0;($INEXISTENT*100) / $TOTALES" | bc)'% - '"$INEXISTENT"
+			echo '   TIMEOUT:' $(echo "scale=0;($TIMEOUT*100) / $TOTALES" | bc)'% - '"$TIMEOUT"
+			echo '  ----------------------'
+			echo '     TOTAL:' $(echo "scale=0;($TOTALES*100) / $TOTALES" | bc)'% - '"$TOTALES"
+			echo '=========================='
+		else
+			echo "This command dont work without spfbl server stored in same server."
+		fi
+	;;
 	*)
 		head
 		printf "Help\n\n"
 		printf "User Commands:\n"
 		printf "    $0 version\n"
+		printf "    $0 start|stop|restart|shutdown\n"
 		printf "    $0 block { add sender | drop sender | show [all] | find }\n"
 		printf "    $0 white { add sender | drop sender | show | sender }\n"
 		printf "    $0 reputation\n"
@@ -2244,7 +4122,8 @@ case $1 in
 		printf "Admin Commands:\n"
 		printf "    $0 shutdown\n"
 		printf "    $0 store\n"
-		printf "    $0 superclear hostname\n"
+		printf "    $0 stats\n"
+		printf "    $0 clear hostname\n"
 		printf "    $0 tld { add tld | drop tld | show }\n"
 		printf "    $0 peer { add host [email] | drop { host | all } | show [host] | set host send receive | ping host | send host }\n"
 		printf "    $0 retention { show [host] | release { sender | all } | reject { sender | all } }\n"
@@ -2257,6 +4136,7 @@ case $1 in
 		printf "    $0 analise <ip> or { show | dump | drop }\n"
 		printf "    $0 dump\n"
 		printf "    $0 load path\n"
+		printf "    $0 backup days [days to retain backup, default 60]\n"
 		printf "\n"
 	;;
 esac

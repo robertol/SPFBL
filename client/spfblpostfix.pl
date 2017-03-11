@@ -10,12 +10,33 @@
 # será adicionado com o resultado do SPFBL.
 #
 # Para implementar este script no Postfix,
-# adicione as seguintes linhas no arquivo master.cf:
+# salve este arquivo em: /etc/postfix/
 #
-#    policy-spfbl  unix  -       n       n       -       -       spawn
-#        user=nobody argv=/usr/bin/spfblquery.pl
+# Adicione em: /etc/postfix/master.cf
 #
-# Última alteração: 22/08/2016 11:07
+# policy-spfbl  unix  -       n       n       -       -       spawn
+#	user=nobody argv=/usr/bin/perl /etc/postfix/spfblpostfix.pl
+#
+# Altere ou adicione em: /etc/postfix/main.cf
+#
+# smtpd_recipient_restrictions =
+#	permit_mynetworks,
+#	permit_sasl_authenticated,
+#	permit_tls_clientcerts,
+#	reject_unknown_client_hostname,
+#	reject_unknown_reverse_client_hostname,
+#	reject_non_fqdn_sender,
+#	reject_non_fqdn_recipient,
+#	reject_unknown_sender_domain,
+#	reject_unknown_recipient_domain,
+#	reject_invalid_hostname,
+#	reject_non_fqdn_hostname,
+#	reject_unauth_pipelining,
+#	reject_unauth_destination,
+#	check_policy_service unix:private/policy-spfbl,
+#	permit
+#
+# Última alteração: 26/11/2016 16:45
 
 use strict;
 use warnings;
@@ -28,7 +49,7 @@ $| = 1;
 # configs
 my $CONFIG = {
     socket => {
-        PeerHost => 'matrix.spfbl.net',
+        PeerHost => 'matrix.spfbl.net', # change to your hostname
         PeerPort => 9877,
         Proto    => 'tcp',
         Timeout  => 10,
@@ -79,6 +100,11 @@ while ( my $line = <STDIN> ) {
     elsif ( $result =~ /^FLAG/ ) {
         STDOUT->print(
             "action=PREPEND X-Spam-Flag: YES\n\n"
+        );
+    }
+    elsif ( $result =~ /^HOLD/ ) {
+        STDOUT->print(
+            "action=HOLD\n\n"
         );
     }
     elsif ( $result =~ /^NXDOMAIN/ ) {
@@ -164,7 +190,7 @@ while ( my $line = <STDIN> ) {
     }
     elsif ( $result =~ /^FAIL/ ) {
         STDOUT->print(
-             "action=554 5.7.1 SPFBL $params->{sender} is not allowed to send mail from $params->{client_address}.\n\n"
+             "action=554 5.7.1 SPFBL Message rejected due to receiver policy for SPF fail. Please see http://www.openspf.net/Why?s=mfrom;id=$params->{sender};ip=$params->{client_address} \n\n"
         );
     }
     elsif ( $result =~ /^SOFTFAIL / ) {
@@ -177,10 +203,19 @@ while ( my $line = <STDIN> ) {
              "action=PREPEND Received-SPFBL: $result\n\n"
         );
     }
+    elsif ( $result =~ /^INEXISTENT/ ) {
+        STDOUT->print(
+             "action=550 5.1.1 SPFBL Unknown user in virtual mailbox table.\n\n"
+        );
+    }
+    elsif ( $result =~ /^INEXISTENT / ) {
+        STDOUT->print(
+             "action=550 5.1.1 SPFBL Unknown user in virtual mailbox table.\n\n"
+        );
+    }
     else {
         STDOUT->print(
             "action=WARN SPFBL UNKNOWN ERROR\n\n"
         );
     }
 }
-

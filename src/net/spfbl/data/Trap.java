@@ -20,12 +20,14 @@ package net.spfbl.data;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import net.spfbl.core.Client;
 import net.spfbl.core.ProcessException;
 import net.spfbl.core.Server;
+import net.spfbl.core.User;
 import net.spfbl.whois.Domain;
 import org.apache.commons.lang3.SerializationUtils;
 
@@ -39,110 +41,331 @@ public class Trap {
     /**
      * Conjunto de destinatarios de spamtrap.
      */
-    private static final HashSet<String> SET = new HashSet<String>();
+//    private static final HashSet<String> SET = new HashSet<String>();
+    private static final HashMap<String,Long> MAP = new HashMap<String,Long>();
     /**
      * Flag que indica se o cache foi modificado.
      */
     private static boolean CHANGED = false;
 
-    private static boolean dropExact(String token) {
-        if (SET.remove(token)) {
+    private synchronized static boolean dropExact(String token) {
+        if (token == null) {
+            return false;
+        } else if (MAP.remove(token) == null) {
+            return false;
+        } else {
             CHANGED = true;
             return true;
+        }
+    }
+    
+    public static boolean putTrap(String client, String token, String timeString) throws ProcessException {
+        if (!Domain.isValidEmail(client)) {
+            throw new ProcessException("INVALID USER");
+        } else if (!isValid(token)) {
+            throw new ProcessException("INVALID TRAP");
         } else {
+            try {
+                Long time = timeString == null ? 0L : Long.parseLong(timeString);
+                return putExact(client.toLowerCase() + ':' + token.toLowerCase(), time);
+            } catch (NumberFormatException ex) {
+                throw new ProcessException("INVALID TIME", ex);
+            }
+        }
+    }
+    
+    public static boolean putInexistent(String client, String token, String timeString) throws ProcessException {
+        if (!Domain.isValidEmail(client)) {
+            throw new ProcessException("INVALID USER");
+        } else if (!isValid(token)) {
+            throw new ProcessException("INVALID ADDRESS");
+        } else {
+            try {
+                long time = timeString == null ? System.currentTimeMillis() + 31536000000L : Long.parseLong(timeString);
+                if (time < System.currentTimeMillis()) {
+                    throw new ProcessException("INVALID TIME");
+                } else {
+                    return putExact(client.toLowerCase() + ':' + token.toLowerCase(), time);
+                }
+            } catch (NumberFormatException ex) {
+                throw new ProcessException("INVALID TIME", ex);
+            }
+        }
+    }
+    
+    public static boolean putTrap(String token, String timeString) throws ProcessException {
+        if (!isValid(token)) {
+            throw new ProcessException("INVALID TRAP");
+        } else {
+            try {
+                Long time = timeString == null ? 0L : Long.parseLong(timeString);
+                return putExact(token.toLowerCase(), time);
+            } catch (NumberFormatException ex) {
+                throw new ProcessException("INVALID TIME", ex);
+            }
+        }
+    }
+    
+    public static boolean putInexistent(String token, String timeString) throws ProcessException {
+        if (!isValid(token)) {
+            throw new ProcessException("INVALID ADDRESS");
+        } else {
+            try {
+                long time = timeString == null ? System.currentTimeMillis() + 31536000000L : Long.parseLong(timeString);
+                if (time < System.currentTimeMillis()) {
+                    throw new ProcessException("INVALID TIME");
+                } else {
+                    return putExact(token.toLowerCase(), time);
+                }
+            } catch (NumberFormatException ex) {
+                throw new ProcessException("INVALID TIME", ex);
+            }
+        }
+    }
+    
+    private synchronized static boolean putExact(String token, Long timeNew) {
+        if (token == null || timeNew == null) {
             return false;
+        } else {
+            Long timeOld = MAP.put(token, timeNew);
+            if (timeOld == null) {
+                return CHANGED = true;
+            } else {
+                long timeNow = System.currentTimeMillis();
+                return CHANGED = timeOld < timeNow != timeNew < timeNow;
+            }
         }
     }
 
-    private static boolean addExact(String token) {
-        if (SET.add(token)) {
-            CHANGED = true;
-            return true;
-        } else {
+    private synchronized static boolean addTrapExact(String token) {
+        if (token == null) {
             return false;
+        } else {
+            Long time = MAP.put(token, 0L);
+            if (time == null || !time.equals(0L)) {
+                return CHANGED = true;
+            } else {
+                return false;
+            }
         }
     }
 
-    public static TreeSet<String> getAll() throws ProcessException {
+    public synchronized static TreeSet<String> getTrapAllSet() {
         TreeSet<String> blockSet = new TreeSet<String>();
-        blockSet.addAll(SET);
+        for (String key : MAP.keySet()) {
+            if (System.currentTimeMillis() > MAP.get(key)) {
+                blockSet.add(key);
+            }
+        }
         return blockSet;
     }
+    
+    public synchronized static TreeSet<String> getInexistentAllSet() {
+        TreeSet<String> blockSet = new TreeSet<String>();
+        for (String key : MAP.keySet()) {
+            if (System.currentTimeMillis() <= MAP.get(key)) {
+                blockSet.add(key);
+            }
+        }
+        return blockSet;
+    }
+    
+    public synchronized static Long getTime(String address) {
+        if (address == null) {
+            return null;
+        } else {
+            return MAP.get(address);
+        }
+    }
+    
+    public synchronized static HashMap<String,Long> getMap() {
+        HashMap<String,Long> map = new HashMap<String,Long>();
+        map.putAll(MAP);
+        return map;
+    }
 
-    public static boolean containsExact(String address) {
-        return SET.contains(address);
+    public synchronized static boolean containsTrapExact(String address) {
+        return System.currentTimeMillis() > MAP.get(address);
+    }
+    
+    public synchronized static boolean containsInexistentExact(String address) {
+        return System.currentTimeMillis() <= MAP.get(address);
+    }
+    
+    public synchronized static boolean containsAnythingExact(String address) {
+        return MAP.containsKey(address);
     }
 
     public static boolean isValid(String recipient) {
         if (recipient == null) {
             return false;
-        } else if (Domain.isEmail(recipient)) {
-            return true;
-        } else if (recipient.startsWith("@") && Domain.containsDomain(recipient.substring(1))) {
+        } else if (Domain.isValidEmail(recipient)) {
             return true;
         } else {
-            return false;
+            return recipient.startsWith("@") && Domain.containsDomain(recipient.substring(1));
         }
     }
 
-    public static boolean add(String recipient) throws ProcessException {
+    public static boolean addTrap(String recipient) throws ProcessException {
         if (!isValid(recipient)) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
-        } else if (addExact(recipient.toLowerCase())) {
-            return true;
+            throw new ProcessException("RECIPIENT INVALID");
         } else {
-            return false;
+            return addTrapExact(recipient.toLowerCase());
         }
     }
 
-    public static boolean add(Client client, String recipient) throws ProcessException {
+    public static boolean addTrap(Client client, String recipient) throws ProcessException {
         if (client == null || !client.hasEmail()) {
-            throw new ProcessException("ERROR: CLIENT INVALID");
+            throw new ProcessException("CLIENT INVALID");
         } else if (!isValid(recipient)) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
-        } else if (addExact(client.getEmail() + ':' + recipient.toLowerCase())) {
-            return true;
+            throw new ProcessException("RECIPIENT INVALID");
         } else {
+            return addTrapExact(client.getEmail() + ':' + recipient.toLowerCase());
+        }
+    }
+    
+    public static boolean addTrap(String client, String recipient) throws ProcessException {
+        if (client == null || !Domain.isValidEmail(client)) {
+            throw new ProcessException("CLIENT INVALID");
+        } else if (!isValid(recipient)) {
+            throw new ProcessException("RECIPIENT INVALID");
+        } else {
+            return addTrapExact(client + ':' + recipient.toLowerCase());
+        }
+    }
+    
+    public static boolean addInexistentForever(String recipient) {
+        if (!isValid(recipient)) {
             return false;
+        } else {
+            return putExact(recipient.toLowerCase(), Long.MAX_VALUE);
+        }
+    }
+    
+    public static boolean addInexistent(User user, String recipient) throws ProcessException {
+        if (user == null) {
+            throw new ProcessException("USER INVALID");
+        } else if (!isValid(recipient)) {
+            throw new ProcessException("RECIPIENT INVALID");
+        } else {
+            long time = System.currentTimeMillis() + 31536000000L;
+            return putExact(user.getEmail() + ':' + recipient.toLowerCase(), time);
+        }
+    }
+    
+    public static boolean addInexistentForever(User user, String recipient) {
+        if (user == null) {
+            return false;
+        } else if (!isValid(recipient)) {
+            return false;
+        } else {
+            return putExact(user.getEmail() + ':' + recipient.toLowerCase(), Long.MAX_VALUE);
+        }
+    }
+    
+    public static boolean addInexistent(Client client, String recipient) throws ProcessException {
+        if (client == null || !client.hasEmail()) {
+            throw new ProcessException("CLIENT INVALID");
+        } else if (!isValid(recipient)) {
+            throw new ProcessException("RECIPIENT INVALID");
+        } else {
+            long time = System.currentTimeMillis() + 31536000000L;
+            return putExact(client.getEmail() + ':' + recipient.toLowerCase(), time);
         }
     }
 
-    public static TreeSet<String> dropAll() throws ProcessException {
+    public static TreeSet<String> dropTrapAll() throws ProcessException {
         TreeSet<String> trapSet = new TreeSet<String>();
-        for (String trap : getAll()) {
+        for (String trap : getTrapAllSet()) {
             if (dropExact(trap)) {
                 trapSet.add(trap);
             }
         }
         return trapSet;
     }
+    
+    public static TreeSet<String> dropInexistentAll() throws ProcessException {
+        TreeSet<String> trapSet = new TreeSet<String>();
+        for (String trap : getInexistentAllSet()) {
+            if (dropExact(trap)) {
+                trapSet.add(trap);
+            }
+        }
+        return trapSet;
+    }
+    
+    public static boolean clear(User user, String address) throws ProcessException {
+        if (isValid(address)) {
+            int index = address.indexOf('@');
+            String domain = address.substring(index);
+            boolean dropped = drop(address);
+            dropped |= drop(domain);
+            if (user != null) {
+                dropped |= drop(user, address);
+                dropped |= drop(user, domain);
+            }
+            return dropped;
+        } else {
+            return false;
+        }
+    }
 
     public static boolean drop(String recipient) throws ProcessException {
         if (!isValid(recipient)) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
-        } else if (dropExact(recipient.toLowerCase())) {
-            return true;
+            throw new ProcessException("RECIPIENT INVALID");
         } else {
-            return false;
+            return dropExact(recipient.toLowerCase());
+        }
+    }
+    
+    public static boolean drop(User user, String recipient) throws ProcessException {
+        if (user == null) {
+            throw new ProcessException("USER INVALID");
+        } else if (!isValid(recipient)) {
+            throw new ProcessException("RECIPIENT INVALID");
+        } else {
+            return dropExact(user.getEmail() + ':' + recipient.toLowerCase());
         }
     }
 
     public static boolean drop(Client client, String recipient) throws ProcessException {
         if (client == null || !client.hasEmail()) {
-            throw new ProcessException("ERROR: CLIENT INVALID");
+            throw new ProcessException("CLIENT INVALID");
         } else if (!isValid(recipient)) {
-            throw new ProcessException("ERROR: RECIPIENT INVALID");
-        } else if (dropExact(client.getEmail() + ':' + recipient.toLowerCase())) {
-            return true;
+            throw new ProcessException("RECIPIENT INVALID");
         } else {
-            return false;
+            return dropExact(client.getEmail() + ':' + recipient.toLowerCase());
+        }
+    }
+    
+    public static boolean drop(String client, String recipient) throws ProcessException {
+        if (client == null || !Domain.isValidEmail(client)) {
+            throw new ProcessException("CLIENT INVALID");
+        } else if (!isValid(recipient)) {
+            throw new ProcessException("RECIPIENT INVALID");
+        } else {
+            return dropExact(client + ':' + recipient.toLowerCase());
         }
     }
 
-    public static TreeSet<String> get(Client client) throws ProcessException {
+    public static TreeSet<String> getTrapSet(Client client) throws ProcessException {
         TreeSet<String> trapSet = new TreeSet<String>();
         if (client != null && client.hasEmail()) {
-            for (String recipient : getAll()) {
+            for (String recipient : getTrapAllSet()) {
+                if (recipient.startsWith(client.getEmail() + ':')) {
+                    int index = recipient.indexOf(':') + 1;
+                    recipient = recipient.substring(index);
+                    trapSet.add(recipient);
+                }
+            }
+        }
+        return trapSet;
+    }
+    
+    public static TreeSet<String> getInexistentSet(Client client) throws ProcessException {
+        TreeSet<String> trapSet = new TreeSet<String>();
+        if (client != null && client.hasEmail()) {
+            for (String recipient : getInexistentAllSet()) {
                 if (recipient.startsWith(client.getEmail() + ':')) {
                     int index = recipient.indexOf(':') + 1;
                     recipient = recipient.substring(index);
@@ -153,9 +376,19 @@ public class Trap {
         return trapSet;
     }
 
-    public static TreeSet<String> get() throws ProcessException {
+    public static TreeSet<String> getTrapSet() throws ProcessException {
         TreeSet<String> trapSet = new TreeSet<String>();
-        for (String recipient : getAll()) {
+        for (String recipient : getTrapAllSet()) {
+            if (!recipient.contains(":")) {
+                trapSet.add(recipient);
+            }
+        }
+        return trapSet;
+    }
+    
+    public static TreeSet<String> getInexistentSet() throws ProcessException {
+        TreeSet<String> trapSet = new TreeSet<String>();
+        for (String recipient : getInexistentAllSet()) {
             if (!recipient.contains(":")) {
                 trapSet.add(recipient);
             }
@@ -163,10 +396,15 @@ public class Trap {
         return trapSet;
     }
 
-    public static boolean contains(Client client, String recipient) {
-        if (client == null) {
-            return false;
-        } else if (!client.hasEmail()) {
+    public static boolean containsTrap(Client client, User user, String recipient) {
+        // Definição do e-mail do usuário.
+        String userEmail = null;
+        if (user != null) {
+            userEmail = user.getEmail();
+        } else if (client != null) {
+            userEmail = client.getEmail();
+        }
+        if (userEmail == null) {
             return false;
         } else if (!isValid(recipient)) {
             return false;
@@ -174,30 +412,30 @@ public class Trap {
             recipient = recipient.toLowerCase();
             int index2 = recipient.lastIndexOf('@');
             String domain = recipient.substring(recipient.lastIndexOf('@'));
-            if (containsExact(recipient)) {
+            if (containsTrapExact(recipient)) {
                 return true;
-            } else if (containsExact(domain)) {
+            } else if (containsTrapExact(domain)) {
                 return true;
-            } else if (containsExact(client.getEmail() + ':' + recipient)) {
+            } else if (containsTrapExact(userEmail + ':' + recipient)) {
                 return true;
-            } else if (containsExact(client.getEmail() + ':' + domain)) {
+            } else if (containsTrapExact(userEmail + ':' + domain)) {
                 return true;
             } else {
                 int index3 = domain.length();
                 while ((index3 = domain.lastIndexOf('.', index3 - 1)) > index2) {
                     String subdomain = domain.substring(0, index3 + 1);
-                    if (containsExact(subdomain)) {
+                    if (containsTrapExact(subdomain)) {
                         return true;
-                    } else if (containsExact(client.getEmail() + ':' + subdomain)) {
+                    } else if (containsTrapExact(userEmail + ':' + subdomain)) {
                         return true;
                     }
                 }
                 int index4 = recipient.length();
                 while ((index4 = recipient.lastIndexOf('.', index4 - 1)) > index2) {
                     String subrecipient = recipient.substring(0, index4 + 1);
-                    if (containsExact(subrecipient)) {
+                    if (containsTrapExact(subrecipient)) {
                         return true;
-                    } else if (containsExact(client.getEmail() + ':' + subrecipient)) {
+                    } else if (containsTrapExact(userEmail + ':' + subrecipient)) {
                         return true;
                     }
                 }
@@ -205,16 +443,192 @@ public class Trap {
             }
         }
     }
+    
+    public static boolean containsInexistent(Client client, User user, String recipient) {
+        // Definição do e-mail do usuário.
+        String userEmail = null;
+        if (user != null) {
+            userEmail = user.getEmail();
+        } else if (client != null) {
+            userEmail = client.getEmail();
+        }
+        if (userEmail == null) {
+            return false;
+        } else if (!isValid(recipient)) {
+            return false;
+        } else {
+            recipient = recipient.toLowerCase();
+            int index2 = recipient.lastIndexOf('@');
+            String domain = recipient.substring(recipient.lastIndexOf('@'));
+            if (containsInexistentExact(recipient)) {
+                return true;
+            } else if (containsInexistentExact(domain)) {
+                return true;
+            } else if (containsInexistentExact(userEmail + ':' + recipient)) {
+                return true;
+            } else if (containsInexistentExact(userEmail + ':' + domain)) {
+                return true;
+            } else {
+                int index3 = domain.length();
+                while ((index3 = domain.lastIndexOf('.', index3 - 1)) > index2) {
+                    String subdomain = domain.substring(0, index3 + 1);
+                    if (containsInexistentExact(subdomain)) {
+                        return true;
+                    } else if (containsInexistentExact(userEmail + ':' + subdomain)) {
+                        return true;
+                    }
+                }
+                int index4 = recipient.length();
+                while ((index4 = recipient.lastIndexOf('.', index4 - 1)) > index2) {
+                    String subrecipient = recipient.substring(0, index4 + 1);
+                    if (containsInexistentExact(subrecipient)) {
+                        return true;
+                    } else if (containsInexistentExact(userEmail + ':' + subrecipient)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+    
+    public static boolean containsAnything(Client client, User user, String recipient) {
+        // Definição do e-mail do usuário.
+        String userEmail = null;
+        if (user != null) {
+            userEmail = user.getEmail();
+        } else if (client != null) {
+            userEmail = client.getEmail();
+        }
+        if (userEmail == null) {
+            return false;
+        } else if (!isValid(recipient)) {
+            return false;
+        } else {
+            recipient = recipient.toLowerCase();
+            int index2 = recipient.lastIndexOf('@');
+            String domain = recipient.substring(recipient.lastIndexOf('@'));
+            if (containsAnythingExact(recipient)) {
+                return true;
+            } else if (containsAnythingExact(domain)) {
+                return true;
+            } else if (containsAnythingExact(userEmail + ':' + recipient)) {
+                return true;
+            } else if (containsAnythingExact(userEmail + ':' + domain)) {
+                return true;
+            } else {
+                int index3 = domain.length();
+                while ((index3 = domain.lastIndexOf('.', index3 - 1)) > index2) {
+                    String subdomain = domain.substring(0, index3 + 1);
+                    if (containsAnythingExact(subdomain)) {
+                        return true;
+                    } else if (containsAnythingExact(userEmail + ':' + subdomain)) {
+                        return true;
+                    }
+                }
+                int index4 = recipient.length();
+                while ((index4 = recipient.lastIndexOf('.', index4 - 1)) > index2) {
+                    String subrecipient = recipient.substring(0, index4 + 1);
+                    if (containsAnythingExact(subrecipient)) {
+                        return true;
+                    } else if (containsAnythingExact(userEmail + ':' + subrecipient)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+    }
+    
+    public static boolean contaisAnything(String recipient) {
+        return getTime(null, null, recipient) != null;
+    }
+    
+    public static Long getTime(User user, String recipient) {
+        if (user == null) {
+            return null;
+        } else {
+            return getTime(user.getEmail(), recipient);
+        }
+    }
+    
+    public static Long getTime(Client client, User user, String recipient) {
+        // Definição do e-mail do usuário.
+        String userEmail = null;
+        if (user != null) {
+            userEmail = user.getEmail();
+        } else if (client != null) {
+            userEmail = client.getEmail();
+        }
+        return getTime(userEmail, recipient);
+    }
+    
+    public static Long getTime(String userEmail, String recipient) {
+        if (!isValid(recipient)) {
+            return null;
+        } else {
+            recipient = recipient.toLowerCase();
+            int index2 = recipient.lastIndexOf('@');
+            String domain = recipient.substring(recipient.lastIndexOf('@'));
+            Long time;
+            if ((time = Trap.getTime(recipient)) != null) {
+                return time;
+            } else if ((time = Trap.getTime(domain)) != null) {
+                return time;
+            } else if (userEmail != null && (time = Trap.getTime(userEmail + ':' + recipient)) != null) {
+                return time;
+            } else if (userEmail != null && (time = Trap.getTime(userEmail + ':' + domain)) != null) {
+                return time;
+            } else {
+                int index3 = domain.length();
+                while ((index3 = domain.lastIndexOf('.', index3 - 1)) > index2) {
+                    String subdomain = domain.substring(0, index3 + 1);
+                    if ((time = Trap.getTime(subdomain)) != null) {
+                        return time;
+                    } else if (userEmail != null && (time = Trap.getTime(userEmail + ':' + subdomain)) != null) {
+                        return time;
+                    }
+                }
+                int index4 = recipient.length();
+                while ((index4 = recipient.lastIndexOf('.', index4 - 1)) > index2) {
+                    String subrecipient = recipient.substring(0, index4 + 1);
+                    if ((time = Trap.getTime(subrecipient)) != null) {
+                        return time;
+                    } else if (userEmail != null && (time = Trap.getTime(userEmail + ':' + subrecipient)) != null) {
+                        return time;
+                    }
+                }
+                return null;
+            }
+        }
+    }
 
     public static void store() {
         if (CHANGED) {
             try {
+                Server.logTrace("storing trap.set");
                 long time = System.currentTimeMillis();
                 File file = new File("./data/trap.set");
-                TreeSet<String> set = getAll();
+                TreeSet<String> set = getTrapAllSet();
                 FileOutputStream outputStream = new FileOutputStream(file);
                 try {
                     SerializationUtils.serialize(set, outputStream);
+                    CHANGED = false;
+                } finally {
+                    outputStream.close();
+                }
+                Server.logStore(time, file);
+            } catch (Exception ex) {
+                Server.logError(ex);
+            }
+            try {
+                Server.logTrace("storing trap.map");
+                long time = System.currentTimeMillis();
+                File file = new File("./data/trap.map");
+                HashMap<String,Long> map = getMap();
+                FileOutputStream outputStream = new FileOutputStream(file);
+                try {
+                    SerializationUtils.serialize(map, outputStream);
                     CHANGED = false;
                 } finally {
                     outputStream.close();
@@ -228,8 +642,26 @@ public class Trap {
 
     public static void load() {
         long time = System.currentTimeMillis();
-        File file = new File("./data/trap.set");
+        File file = new File("./data/trap.map");
         if (file.exists()) {
+            try {
+                Map<String,Long> map;
+                FileInputStream fileInputStream = new FileInputStream(file);
+                try {
+                    map = SerializationUtils.deserialize(fileInputStream);
+                } finally {
+                    fileInputStream.close();
+                }
+                for (String token : map.keySet()) {
+                    Long time2 = map.get(token);
+                    putExact(token, time2);
+                }
+                CHANGED = false;
+                Server.logLoad(time, file);
+            } catch (Exception ex) {
+                Server.logError(ex);
+            }
+        } else if ((file = new File("./data/trap.set")).exists()) {
             try {
                 Set<String> set;
                 FileInputStream fileInputStream = new FileInputStream(file);
@@ -239,7 +671,7 @@ public class Trap {
                     fileInputStream.close();
                 }
                 for (String token : set) {
-                    addExact(token);
+                    addTrapExact(token);
                 }
                 CHANGED = false;
                 Server.logLoad(time, file);

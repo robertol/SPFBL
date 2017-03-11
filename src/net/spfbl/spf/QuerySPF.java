@@ -29,12 +29,14 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.LinkedList;
 import java.util.StringTokenizer;
+import java.util.TreeSet;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import net.spfbl.data.Block;
 import net.spfbl.core.Client;
 import net.spfbl.core.Core;
 import net.spfbl.core.User;
+import net.spfbl.data.NoReply;
 import net.spfbl.data.Provider;
 import net.spfbl.data.Trap;
 import net.spfbl.data.White;
@@ -64,6 +66,7 @@ public final class QuerySPF extends Server {
         // Criando conexões.
         Server.logDebug("binding SPF socket on port " + port + "...");
         SERVER_SOCKET = new ServerSocket(port);
+        Server.logTrace(getName() + " thread allocation.");
     }
 
     private int CONNECTION_ID = 1;
@@ -87,6 +90,7 @@ public final class QuerySPF extends Server {
         public Connection() {
             super("SPFTCP" + Core.CENTENA_FORMAT.format(CONNECTION_ID++));
             setPriority(Thread.MAX_PRIORITY);
+            Server.logTrace(getName() + " thread allocation.");
         }
 
         /**
@@ -104,7 +108,7 @@ public final class QuerySPF extends Server {
                 return false;
             } else {
                 int interval = (int) (System.currentTimeMillis() - time) / 1000;
-                return interval > 20;
+                return interval > 60;
             }
         }
 
@@ -152,388 +156,552 @@ public final class QuerySPF extends Server {
          */
         @Override
         public void run() {
-            Socket socket;
-            while ((socket = getSocket()) != null) {
-                try {
-                    String type = "SPFBL";
-                    String query = null;
-                    String result = null;
+            try {
+                Socket socket;
+                while ((socket = getSocket()) != null) {
                     try {
+                        String type = "SPFBL";
+                        String query = null;
+                        String result = null;
                         InetAddress ipAddress = socket.getInetAddress();
-                        Client client = Client.get(ipAddress);
-                        User user = client == null ? null : client.getUser();
-                        InputStream inputStream = socket.getInputStream();
-                        InputStreamReader inputStreamReader = new InputStreamReader(inputStream, "UTF-8");
-                        BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
-                        String line = bufferedReader.readLine();
-                        if (line != null) {
-                            if (line.equals("request=smtpd_access_policy")) {
-                                // Entrada padrão do Postfix.
-                                // Extrair os atributos necessários.
-                                String ip = null;
-                                String sender = null;
-                                String helo = null;
-                                String recipient = null;
-                                query = "";
-                                do {
-                                    query += line + "\\n";
-                                    if (line.startsWith("helo_name=")) {
-                                        int index = line.indexOf('=') + 1;
-                                        helo = line.substring(index);
-                                    } else if (line.startsWith("sender=")) {
-                                        int index = line.indexOf('=') + 1;
-                                        sender = line.substring(index);
-                                    } else if (line.startsWith("client_address=")) {
-                                        int index = line.indexOf('=') + 1;
-                                        ip = line.substring(index);
-                                    } else if (line.startsWith("recipient=")) {
-                                        int index = line.indexOf('=') + 1;
-                                        recipient = line.substring(index);
-                                    }
-                                } while ((line = bufferedReader.readLine()).length() > 0);
-                                query += "\\n";
-                                result = SPF.processPostfixSPF(
-                                        ipAddress, client, user, ip, sender, helo, recipient
-                                        );
+                        Client client = null;
+                        User user = null;
+                        try {
+                            client = Client.get(ipAddress);
+                            user = client == null ? null : client.getUser();
+                            InputStream inputStream = socket.getInputStream();
+                            InputStreamReader inputStreamReader = new InputStreamReader(inputStream, "UTF-8");
+                            BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
+                            String line = bufferedReader.readLine();
+                            if (line == null) {
+                                result = "EMPTY";
                             } else {
-                                StringTokenizer tokenizer = new StringTokenizer(line, " ");
-                                String token = tokenizer.nextToken();
-                                Integer otpCode = Core.getInteger(token);
-                                if (otpCode != null) {
-                                    int index = line.indexOf(token) + token.length() + 1;
-                                    line = line.substring(index).trim();
-                                    token = tokenizer.nextToken();
-                                    if (user == null) {
-                                        result = "ERROR: OTP UNDEFINED USER\n";
-                                    } else if (!user.isValidOTP(otpCode)) {
-                                        result = "ERROR: OTP INVALID CODE\n";
-                                    }
-                                }
-                                if (result != null) {
-                                    // Houve erro de OTP.
-                                } else if (token.equals("VERSION")) {
-                                    result = Core.getAplication() + "\n";
-                                } else if (line.startsWith("BLOCK ADD ")) {
-                                    query = line.substring(6).trim();
-                                    type = "BLOCK";
-                                    // Mecanismo de adição bloqueio de remetente.
-                                    line = line.substring(10);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
-                                            String sender = tokenizer.nextToken();
-                                            boolean added = Block.add(client, sender);
-                                            if (result == null) {
-                                                result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            } else {
-                                                result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
-                                            }
+                                if (line.equals("request=smtpd_access_policy")) {
+                                // Entrada padrão do Postfix.
+                                    // Extrair os atributos necessários.
+                                    String ip = null;
+                                    String sender = null;
+                                    String helo = null;
+                                    String recipient = null;
+                                    query = "";
+                                    do {
+                                        query += line + "\\n";
+                                        if (line.startsWith("helo_name=")) {
+                                            int index = line.indexOf('=') + 1;
+                                            helo = line.substring(index);
+                                        } else if (line.startsWith("sender=")) {
+                                            int index = line.indexOf('=') + 1;
+                                            sender = line.substring(index);
+                                        } else if (line.startsWith("client_address=")) {
+                                            int index = line.indexOf('=') + 1;
+                                            ip = line.substring(index);
+                                        } else if (line.startsWith("recipient=")) {
+                                            int index = line.indexOf('=') + 1;
+                                            recipient = line.substring(index);
+                                        }
+                                    } while ((line = bufferedReader.readLine()).length() > 0);
+                                    Server.logTrace(query);
+                                    query += "\\n";
+                                    LinkedList<User> userResult = new LinkedList<User>();
+                                    result = SPF.processPostfixSPF(
+                                            ipAddress, client, user, ip, sender, helo, recipient, userResult
+                                    );
+                                    user = userResult.isEmpty() ? user : userResult.getLast();
+                                } else {
+                                    Server.logTrace(line);
+                                    StringTokenizer tokenizer = new StringTokenizer(line, " ");
+                                    String token = tokenizer.nextToken();
+                                    Integer otpCode = Core.getInteger(token);
+                                    if (otpCode != null) {
+                                        int index = line.indexOf(token) + token.length() + 1;
+                                        line = line.substring(index).trim();
+                                        token = tokenizer.nextToken();
+                                        if (user == null) {
+                                            result = "ERROR: TOTP UNDEFINED USER\n";
+                                        } else if (!user.isValidOTP(otpCode)) {
+                                            result = "ERROR: TOTP INVALID CODE\n";
                                         }
                                     }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.startsWith("BLOCK DROP ")) {
-                                    query = line.substring(6).trim();
-                                    type = "BLOCK";
-                                    // Mecanismo de remoção de bloqueio de remetente.
-                                    line = line.substring(11);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
+                                    if (result != null) {
+                                        // Houve erro de OTP.
+                                    } else if (token.equals("VERSION")) {
+                                        query = token;
+                                        result = Core.getAplication() + "\n";
+                                    } else if (line.startsWith("BLOCK ADD ")) {
+                                        query = line.substring(6).trim();
+                                        type = "BLOCK";
+                                        // Mecanismo de adição bloqueio de remetente.
+                                        line = line.substring(10);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
                                             String sender = tokenizer.nextToken();
-                                            boolean droped = Block.drop(client, sender);
-                                            if (result == null) {
-                                                result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
-                                            } else {
-                                                result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                            try {
+                                                boolean added = Block.add(client, sender);
+                                                if (result == null) {
+                                                    result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                } else {
+                                                    result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
                                             }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
+                                            try {
+                                                if (user != null && user.isTrusted()) {
+                                                    String block;
+                                                    if ((block = Block.add(sender)) != null) {
+                                                        Server.logDebug("new BLOCK '" + block + "' added by '" + user.getEmail() + "'.");
+                                                    }
+                                                }
+                                            } catch (Exception ex) {
+                                                Server.logError(ex);
                                             }
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.equals("BLOCK SHOW ALL")) {
-                                    query = line.substring(6).trim();
-                                    type = "BLOCK";
-                                    // Mecanismo de visualização de bloqueios de remetentes.
-                                    StringBuilder builder = new StringBuilder();
-                                    for (String sender : Block.getAll(client)) {
-                                        builder.append(sender);
-                                        builder.append('\n');
-                                    }
-                                    result = builder.toString();
-                                    if (result.length() == 0) {
-                                        result = "EMPTY\n";
-                                    }
-                                } else if (line.equals("BLOCK SHOW")) {
-                                    query = line.substring(6).trim();
-                                    type = "BLOCK";
-                                    // Mecanismo de visualização de bloqueios de remetentes.
-                                    StringBuilder builder = new StringBuilder();
-                                    for (String sender : Block.get(client)) {
-                                        builder.append(sender);
-                                        builder.append('\n');
-                                    }
-                                    result = builder.toString();
-                                    if (result.length() == 0) {
-                                        result = "EMPTY\n";
-                                    }
-                                } else if (line.startsWith("BLOCK FIND ")) {
-                                    query = line.substring(6).trim();
-                                    type = "BLOCK";
-                                    // Mecanismo de remoção de bloqueio de remetente.
-                                    line = line.substring(11);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("BLOCK DROP ")) {
+                                        query = line.substring(6).trim();
+                                        type = "BLOCK";
+                                        // Mecanismo de remoção de bloqueio de remetente.
+                                        line = line.substring(11);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String sender = tokenizer.nextToken();
+                                                boolean droped = Block.drop(client, sender);
+                                                if (result == null) {
+                                                    result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                } else {
+                                                    result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
+                                            }
+                                        }
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.equals("BLOCK SHOW ALL")) {
+                                        query = line.substring(6).trim();
+                                        type = "BLOCK";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String sender : Block.getAll(client, user)) {
+                                            builder.append(sender);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
+                                        }
+                                    } else if (line.equals("BLOCK SHOW")) {
+                                        query = line.substring(6).trim();
+                                        type = "BLOCK";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String sender : Block.get(client, user)) {
+                                            builder.append(sender);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
+                                        }
+                                    } else if (line.startsWith("BLOCK FIND ")) {
+                                        query = line.substring(6).trim();
+                                        type = "BLOCK";
+                                        // Mecanismo de remoção de bloqueio de remetente.
+                                        line = line.substring(11);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        if (tokenizer.hasMoreTokens()) {
                                             token = tokenizer.nextToken();
-                                            String block = Block.find(client, token, false);
-                                            if (result == null) {
-                                                result = (block == null ? "NONE" : block) + "\n";
+                                            String ticket = null;
+                                            String userEmail = SPF.getClientURLSafe(token);
+                                            if (userEmail == null) {
+                                                userEmail = client == null ? null : client.getEmail();
+                                            } else if (tokenizer.hasMoreTokens()) {
+                                                ticket = token;
+                                                token = tokenizer.nextToken();
                                             } else {
-                                                result += (block == null ? "NONE" : block) + "\n";
+                                                ticket = token;
+                                                token = null;
                                             }
-                                        } catch (Exception ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
+                                            user = User.get(userEmail);
+                                            do {
+                                                String block = Block.find(userEmail, token, false);
+                                                if (block == null) {
+                                                    result = "NONE\n";
+                                                } else if (ticket == null) {
+                                                    result = block + "\n";
+                                                    break;
+                                                } else {
+                                                    try {
+                                                        SPF.addComplainURLSafe(userEmail, ticket, "REJECT");
+                                                        result = block + "\n";
+                                                        break;
+                                                    } catch (ProcessException ex) {
+                                                        result = "INVALID TICKET\n";
+                                                        break;
+                                                    }
+                                                }
+                                            } while (tokenizer.hasMoreElements() && (token = tokenizer.nextToken()) != null);
+                                        }
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("TRAP ADD ")) {
+                                        query = line.substring(5).trim();
+                                        type = "STRAP";
+                                        // Mecanismo de adição de spamtrap.
+                                        line = line.substring(9);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean added = Trap.addTrap(client, recipient);
+                                                if (result == null) {
+                                                    result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                } else {
+                                                    result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
                                             }
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.startsWith("TRAP ADD ")) {
-                                    query = line.substring(5).trim();
-                                    type = "STRAP";
-                                    // Mecanismo de adição de spamtrap.
-                                    line = line.substring(9);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
-                                            String recipient = tokenizer.nextToken();
-                                            boolean added = Trap.add(client, recipient);
-                                            if (result == null) {
-                                                result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            } else {
-                                                result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("TRAP DROP ")) {
+                                        query = line.substring(5).trim();
+                                        type = "STRAP";
+                                        // Mecanismo de remoção de spamtrap.
+                                        line = line.substring(10);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean droped = Trap.drop(client, recipient);
+                                                if (result == null) {
+                                                    result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                } else {
+                                                    result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
                                             }
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.startsWith("TRAP DROP ")) {
-                                    query = line.substring(5).trim();
-                                    type = "STRAP";
-                                    // Mecanismo de remoção de spamtrap.
-                                    line = line.substring(10);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
-                                            String recipient = tokenizer.nextToken();
-                                            boolean droped = Trap.drop(client, recipient);
-                                            if (result == null) {
-                                                result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
-                                            } else {
-                                                result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
-                                            }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.equals("TRAP SHOW")) {
+                                        query = line.substring(5).trim();
+                                        type = "STRAP";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String recipient : Trap.getTrapSet(client)) {
+                                            builder.append(recipient);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
+                                        }
+                                    } else if (line.startsWith("INEXISTENT ADD ")) {
+                                        query = line.substring(5).trim();
+                                        type = "INXST";
+                                        // Mecanismo de adição de spamtrap.
+                                        line = line.substring(15);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean added = Trap.addInexistent(client, recipient);
+                                                if (result == null) {
+                                                    result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                } else {
+                                                    result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
                                             }
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.equals("TRAP SHOW")) {
-                                    query = line.substring(5).trim();
-                                    type = "STRAP";
-                                    // Mecanismo de visualização de bloqueios de remetentes.
-                                    StringBuilder builder = new StringBuilder();
-                                    for (String recipient : Trap.get(client)) {
-                                        builder.append(recipient);
-                                        builder.append('\n');
-                                    }
-                                    result = builder.toString();
-                                    if (result.length() == 0) {
-                                        result = "EMPTY\n";
-                                    }
-                                } else if (line.startsWith("WHITE ADD ")) {
-                                    query = line.substring(6).trim();
-                                    type = "WHITE";
-                                    // Mecanismo de adição de whitelist.
-                                    line = line.substring(10);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
-                                            String recipient = tokenizer.nextToken();
-                                            boolean added = White.add(client, recipient);
-                                            if (result == null) {
-                                                result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            } else {
-                                                result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
-                                            }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("INEXISTENT DROP ")) {
+                                        query = line.substring(5).trim();
+                                        type = "INXST";
+                                        // Mecanismo de remoção de spamtrap.
+                                        line = line.substring(16);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean droped = Trap.drop(client, recipient);
+                                                if (result == null) {
+                                                    result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                } else {
+                                                    result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
                                             }
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.startsWith("WHITE DROP ")) {
-                                    query = line.substring(6).trim();
-                                    type = "WHITE";
-                                    // Mecanismo de remoção de whitelist.
-                                    line = line.substring(11);
-                                    tokenizer = new StringTokenizer(line, " ");
-                                    while (tokenizer.hasMoreElements()) {
-                                        try {
-                                            String recipient = tokenizer.nextToken();
-                                            boolean droped = White.drop(client, recipient);
-                                            if (result == null) {
-                                                result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
-                                            } else {
-                                                result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
-                                            }
-                                        } catch (ProcessException ex) {
-                                            if (result == null) {
-                                                result = ex.getMessage() + "\n";
-                                            } else {
-                                                result += ex.getMessage() + "\n";
-                                            }
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
                                         }
-                                    }
-                                    if (result == null) {
-                                        result = "ERROR: COMMAND";
-                                    }
-                                } else if (line.startsWith("WHITE SENDER ")) {
-                                    query = line.substring(13).trim();
-                                    type = "WHITE";
-                                    if (Domain.isEmail(query)) {
-                                        String domain = Domain.extractHost(query, true);
-                                        if (Provider.containsExact(domain)) {
-                                            token = query;
+                                    } else if (line.equals("INEXISTENT SHOW")) {
+                                        query = line.substring(11).trim();
+                                        type = "INXST";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String recipient : Trap.getInexistentSet(client)) {
+                                            builder.append(recipient);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
+                                        }
+                                    } else if (line.startsWith("INEXISTENT IS ")) {
+                                        query = line.substring(11).trim();
+                                        type = "INXST";
+                                        String address = line.substring(14);
+                                        if (Trap.containsAnything(client, user, address)) {
+                                            result = "TRUE\n";
                                         } else {
-                                            token = domain;
+                                            result = "FALSE\n";
                                         }
-                                        if (White.add(client, token)) {
-                                            result = "ADDED " + token + "\n";
+                                    } else if (line.startsWith("NOREPLY IS ")) {
+                                        query = line.substring(8).trim();
+                                        type = "NRPLY";
+                                        String address = line.substring(11);
+                                        if (NoReply.contains(address, true)) {
+                                            result = "TRUE\n";
+                                        } else if (Trap.containsAnything(client, user, address)) {
+                                            result = "TRUE\n";
                                         } else {
-                                            result = "ALREADY EXISTS " + token + "\n";
+                                            result = "FALSE\n";
+                                        }
+                                    } else if (line.startsWith("WHITE ADD ")) {
+                                        query = line.substring(6).trim();
+                                        type = "WHITE";
+                                        // Mecanismo de adição de whitelist.
+                                        line = line.substring(10);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean added = White.add(client, recipient);
+                                                if (result == null) {
+                                                    result = (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                } else {
+                                                    result += (added ? "ADDED" : "ALREADY EXISTS") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
+                                            }
+                                        }
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("WHITE DROP ")) {
+                                        query = line.substring(6).trim();
+                                        type = "WHITE";
+                                        // Mecanismo de remoção de whitelist.
+                                        line = line.substring(11);
+                                        tokenizer = new StringTokenizer(line, " ");
+                                        while (tokenizer.hasMoreElements()) {
+                                            try {
+                                                String recipient = tokenizer.nextToken();
+                                                boolean droped = White.drop(client, recipient);
+                                                if (result == null) {
+                                                    result = (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                } else {
+                                                    result += (droped ? "DROPPED" : "NOT FOUND") + "\n";
+                                                }
+                                            } catch (ProcessException ex) {
+                                                if (result == null) {
+                                                    result = ex.getMessage() + "\n";
+                                                } else {
+                                                    result += ex.getMessage() + "\n";
+                                                }
+                                            }
+                                        }
+                                        if (result == null) {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.startsWith("WHITE SENDER ")) {
+                                        query = line.substring(13).trim();
+                                        type = "WHITE";
+                                        if (query.startsWith("In-Reply-To:")) {
+                                            int index = query.indexOf(':') + 1;
+                                            String messageID = query.substring(index);
+                                            if (user == null) {
+                                                result = "ERROR: UNDEFINED USER\n";
+                                            } else {
+                                                result = "INVALID ID\n";
+                                                index = messageID.indexOf('<');
+                                                if (index >= 0) {
+                                                    messageID = messageID.substring(index + 1);
+                                                    index = messageID.indexOf('>');
+                                                    if (index > 0) {
+                                                        messageID = messageID.substring(0, index);
+                                                        result = user.whiteMessageBySender(messageID) + '\n';
+                                                    }
+                                                }
+                                            }
+                                        } else if (Domain.isEmail(query)) {
+                                            String domain = Domain.extractHost(query, true);
+                                            if (client == null) {
+                                                result = "ERROR: UNDEFINED CLIENT\n";
+                                            } else if (!client.hasEmail()) {
+                                                result = "ERROR: CLIENT WITHOUT EMAIL\n";
+                                            } else if (Block.containsExact(client.getEmail() + ":" + query)) {
+                                                result = "BLOCKED AS " + query + "\n";
+                                            } else if (Block.containsExact(client.getEmail() + ":" + domain)) {
+                                                result = "BLOCKED AS " + domain + "\n";
+                                            } else {
+                                                if (Provider.containsExact(domain)) {
+                                                    token = query;
+                                                } else {
+                                                    token = domain;
+                                                }
+                                                if (White.add(client, token)) {
+                                                    result = "ADDED " + token + ";PASS\n";
+                                                } else {
+                                                    result = "ALREADY EXISTS " + token + ";PASS\n";
+                                                }
+                                            }
+                                        } else {
+                                            result = "INVALID COMMAND\n";
+                                        }
+                                    } else if (line.equals("WHITE SHOW ALL")) {
+                                        query = line.substring(6).trim();
+                                        type = "WHITE";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String recipient : White.getAll(client, null)) {
+                                            builder.append(recipient);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
+                                        }
+                                    } else if (line.equals("WHITE SHOW")) {
+                                        query = line.substring(6).trim();
+                                        type = "WHITE";
+                                        // Mecanismo de visualização de bloqueios de remetentes.
+                                        StringBuilder builder = new StringBuilder();
+                                        for (String recipient : White.get(client, null)) {
+                                            builder.append(recipient);
+                                            builder.append('\n');
+                                        }
+                                        result = builder.toString();
+                                        if (result.length() == 0) {
+                                            result = "EMPTY\n";
                                         }
                                     } else {
-                                        result = "ERROR: COMMAND\n";
-                                    }
-                                } else if (line.equals("WHITE SHOW ALL")) {
-                                    query = line.substring(6).trim();
-                                    type = "WHITE";
-                                    // Mecanismo de visualização de bloqueios de remetentes.
-                                    StringBuilder builder = new StringBuilder();
-                                    for (String recipient : White.getAll(client)) {
-                                        builder.append(recipient);
-                                        builder.append('\n');
-                                    }
-                                    result = builder.toString();
-                                    if (result.length() == 0) {
-                                        result = "EMPTY\n";
-                                    }
-                                } else if (line.equals("WHITE SHOW")) {
-                                    query = line.substring(6).trim();
-                                    type = "WHITE";
-                                    // Mecanismo de visualização de bloqueios de remetentes.
-                                    StringBuilder builder = new StringBuilder();
-                                    for (String recipient : White.get(client)) {
-                                        builder.append(recipient);
-                                        builder.append('\n');
-                                    }
-                                    result = builder.toString();
-                                    if (result == null) {
-                                        result = "EMPTY\n";
-                                    }
-                                } else {
-                                    query = line.trim();
-                                    result = SPF.processSPF(ipAddress, client, user, query);
-                                    if (query.startsWith("HAM ")) {
-                                        type = "SPFHM";
-                                    } else if (query.startsWith("SPAM ")) {
-                                        type = "SPFSP";
-                                    } else if (query.startsWith("CHECK ")) {
-                                        type = "SPFCK";
+                                        query = line.trim();
+                                        LinkedList<User> userResult = new LinkedList<User>();
+                                        result = SPF.processSPF(ipAddress, client, user, query, userResult);
+                                        user = userResult.isEmpty() ? user : userResult.getLast();
+                                        if (query.startsWith("HAM ")) {
+                                            type = "SPFHM";
+                                        } else if (query.startsWith("SPAM ")) {
+                                            type = "SPFSP";
+                                        } else if (query.startsWith("LINK ")) {
+                                            type = "LINKF";
+                                        } else if (query.startsWith("MALWARE ")) {
+                                            type = "SPFSP";
+                                        } else if (query.startsWith("CHECK ")) {
+                                            type = "SPFCK";
+                                        }
                                     }
                                 }
+                                // Enviando resposta.
+                                OutputStream outputStream = socket.getOutputStream();
+                                outputStream.write(result.getBytes("UTF-8"));
                             }
-                            // Enviando resposta.
-                            OutputStream outputStream = socket.getOutputStream();
-                            outputStream.write(result.getBytes("UTF-8"));
+                        } catch (SocketException ex) {
+                            // Conexão interrompida.
+                            Server.logDebug("interrupted " + getName() + " connection.");
+                            result = "INTERRUPTED\n";
+                        } finally {
+                            // Fecha conexão logo após resposta.
+                            socket.close();
+                            // Log da consulta com o respectivo resultado.
+                            String origin = ipAddress.getHostAddress();
+                            if (client != null) {
+                                client.addQuery();
+                                origin += ' ' + client.getDomain();
+                            }
+                            if (user != null) {
+                                origin += ' ' + user.getEmail();
+                            } else if (client != null && client.hasEmail()) {
+                                origin += ' ' + client.getEmail();
+                            }
+//                        if (client == null) {
+//                            origin = ipAddress.getHostAddress();
+//                        } else if (client.hasEmail()) {
+//                            client.addQuery();
+//                            origin = ipAddress.getHostAddress()
+//                                    + ' ' + client.getDomain()
+//                                    + ' ' + client.getEmail();
+//                        } else {
+//                            client.addQuery();
+//                            origin = ipAddress.getHostAddress()
+//                                    + ' ' + client.getDomain();
+//                        }
+                            Server.logQuery(
+                                    time, type,
+                                    origin,
+                                    query == null ? "DISCONNECTED" : query,
+                                    result
+                            );
                         }
-                    } catch (SocketException ex) {
-                        // Conexão interrompida.
-                        Server.logDebug("interrupted " + getName() + " connection.");
-                        result = "INTERRUPTED\n";
+                    } catch (Exception ex) {
+                        Server.logError(ex);
                     } finally {
-                        // Fecha conexão logo após resposta.
-                        socket.close();
-                        InetAddress address = socket.getInetAddress();
-                        // Log da consulta com o respectivo resultado.
-                        String origin;
-                        Client client = Client.get(address);
-                        if (client == null) {
-                            origin = address.getHostAddress();
-                        } else if (client.hasEmail()) {
-                            client.addQuery();
-                            origin = address.getHostAddress()
-                                    + ' ' + client.getDomain()
-                                    + ' ' + client.getEmail();
-                        } else {
-                            client.addQuery();
-                            origin = address.getHostAddress()
-                                    + ' ' + client.getDomain();
-                        }
-                        Server.logQuery(
-                                time, type,
-                                origin,
-                                query == null ? "DISCONNECTED" : query,
-                                result
-                                );
+                        clearSocket();
+                        // Oferece a conexão ociosa na última posição da lista.
+                        offer(this);
+                        CONNECION_SEMAPHORE.release();
                     }
-                } catch (Exception ex) {
-                    Server.logError(ex);
-                } finally {
-                    clearSocket();
-                    // Oferece a conexão ociosa na última posição da lista.
-                    offer(this);
-                    CONNECION_SEMAPHORE.release();
                 }
+            } finally {
+                CONNECTION_COUNT--;
+                Server.logTrace(getName() + " thread closed.");
             }
-            CONNECTION_COUNT--;
         }
     }
 
@@ -613,7 +781,7 @@ public final class QuerySPF extends Server {
     private Connection pollConnection() {
         try {
             if (CONNECION_SEMAPHORE.tryAcquire(3, TimeUnit.SECONDS)) {
-                // Espera aceitável para conexão de 100ms.
+                // Espera aceitável para conexão de 3s.
                 Connection connection = poll();
                 if (connection == null) {
                     CONNECION_SEMAPHORE.release();
@@ -621,8 +789,6 @@ public final class QuerySPF extends Server {
                     use(connection);
                 }
                 return connection;
-//            } else if (Core.hasLowMemory()) {
-//                return null;
             } else if (CONNECTION_COUNT < CONNECTION_LIMIT) {
                 // Cria uma nova conexão se não houver conexões ociosas.
                 // O servidor aumenta a capacidade conforme a demanda.

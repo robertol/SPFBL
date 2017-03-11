@@ -28,6 +28,8 @@ import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.naming.CommunicationException;
 import javax.naming.NameNotFoundException;
 import javax.naming.NamingEnumeration;
@@ -583,6 +585,20 @@ public final class Reverse implements Serializable {
         return System.currentTimeMillis() - lastQuery > 1209600000;
     }
     
+    public static String getValidHostname(String ip) {
+        Reverse reverse = Reverse.get(ip);
+        if (reverse == null) {
+            return null;
+        } else {
+            String hostname = reverse.getAddressOnly();
+            if (SPF.matchHELO(ip, hostname)) {
+                return hostname;
+            } else {
+                return null;
+            }
+        }
+    }
+    
     public static String getHostname(String ip) {
         Reverse reverse = Reverse.get(ip);
         if (reverse == null) {
@@ -661,6 +677,7 @@ public final class Reverse implements Serializable {
     public static void store() {
         if (isChanged()) {
             try {
+                Server.logTrace("storing reverse.map");
                 long time = System.currentTimeMillis();
                 File file = new File("./data/reverse.map");
                 HashMap<String,Reverse> map = getMap();
